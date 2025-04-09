@@ -28,16 +28,27 @@ pub struct App {
 
 impl App {
     pub fn start() {
+        tracing::info!("App: Initializing new App instance.");
         let mut app = App::new();
+        tracing::info!("App: Entering main loop.");
         loop {
-            // Az aktuális állapot futtatása a boton
-            app.update().unwrap();
-            // Állapotváltás az egyes fázisok között
+            tracing::info!("App: Updating current state.");
+            match app.update() {
+                Ok(_) => tracing::info!("App: State update completed successfully."),
+                Err(e) => {
+                    tracing::error!("App: Error during state update: {:?}", e);
+                    break;
+                }
+            }
+            tracing::info!("App: Transitioning to next state.");
             app.next_state();
+            // Egy rövid várakozás a loop körök között (opcionális)
+            sleep(Duration::from_millis(100));
         }
     }
 
     fn new() -> Self {
+        tracing::info!("App: Creating new App instance with StartState and new Bot.");
         Self {
             state: Box::new(StartState::new()),
             bot: Bot::new(),
@@ -45,11 +56,15 @@ impl App {
     }
 
     fn update(&mut self) -> Result<(), Box<dyn Error>> {
+        tracing::info!("App: Calling update() on current state.");
         self.state.update(&mut self.bot);
         Ok(())
     }
 
     fn next_state(&mut self) {
-        self.state = self.state.next();
+        tracing::info!("App: Requesting next state from current state.");
+        let next = self.state.next();
+        tracing::info!("App: Transitioning to new state.");
+        self.state = next;
     }
 }
