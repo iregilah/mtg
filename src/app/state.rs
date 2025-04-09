@@ -7,6 +7,6 @@ pub mod submit_state;
 pub mod opponents_turn_state;
 
 pub trait State {
-    fn next(&mut self) -> Box<dyn State>;
     fn update(&mut self, bot: &mut crate::app::bot::Bot);
+    fn next(&mut self) -> Box<dyn State>;
 }

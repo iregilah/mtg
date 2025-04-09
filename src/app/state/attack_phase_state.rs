@@ -1,28 +1,55 @@
+// state/attack_phase_state.rs
+
 use crate::app::bot::Bot;
 use crate::app::state::State;
 use std::thread::sleep;
 use std::time::Duration;
+use crate::app::ocr::check_main_region_text;
+use crate::app::state::opponents_turn_state::OpponentsTurnState;
+use crate::app::ui::{check_button_color, press_key};
 use crate::app::state::second_main_phase_state::SecondMainPhaseState;
+use crate::app::ui;
 
-pub struct AttackPhaseState {}
-
+pub struct AttackPhaseState {
+    no_attack: bool,
+}
 impl AttackPhaseState {
     pub fn new() -> Self {
-        Self {}
+        Self { no_attack: false }
     }
 }
 
 impl State for AttackPhaseState {
     fn update(&mut self, bot: &mut Bot) {
         tracing::info!("AttackPhaseState: starting attack phase.");
-        // Támadási fázis
-        bot.handle_attack_phase();
-        sleep(Duration::from_secs(1));
+        let can_attack = bot.battlefield_creatures.iter().any(|creature| !creature.summoning_sickness);
+        if !can_attack {
+            tracing::info!("No creature can attack (all have summoning sickness or none exist). Transitioning to OpponentsTurnState.");
+            self.no_attack = true;
+            return;
+        }
+        let mut is_red = check_button_color(&bot.cords) == "red";
+        loop {
+            is_red = check_button_color(&bot.cords) == "red";
+            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, is_red);
+            tracing::info!("(Attack phase) Main region text: {}", main_text);
+            if main_text.contains("All Attack") {
+                press_key(winapi::um::winuser::VK_SPACE as u16);
+                break;
+            } else if main_text.contains("Next") {
+                press_key(winapi::um::winuser::VK_SPACE as u16);
+            }
+            sleep(Duration::from_secs(2));
+        }
     }
 
     fn next(&mut self) -> Box<dyn State> {
-        tracing::info!("AttackPhaseState: transitioning to SecondMainPhaseState.");
-        // Átmegyünk a második main phase-re
-        Box::new(SecondMainPhaseState::new())
+        if self.no_attack {
+            tracing::info!("AttackPhaseState: transitioning to OpponentsTurnState due to no creature available.");
+            Box::new(OpponentsTurnState::new())
+        } else {
+            tracing::info!("AttackPhaseState: transitioning to SecondMainPhaseState.");
+            Box::new(SecondMainPhaseState::new())
+        }
     }
 }

@@ -2,7 +2,9 @@ use crate::app::bot::Bot;
 use crate::app::state::State;
 use std::thread::sleep;
 use std::time::Duration;
+use crate::app::ocr::check_main_region_text;
 use crate::app::state::first_main_phase_state::FirstMainPhaseState;
+use crate::app::ui::check_button_color;
 
 pub struct OpponentsTurnState {}
 
@@ -15,8 +17,21 @@ impl OpponentsTurnState {
 impl State for OpponentsTurnState {
     fn update(&mut self, bot: &mut Bot) {
         tracing::info!("OpponentsTurnState: handling opponent's turn.");
-        // Ellenfél körének kezelése
-        bot.handle_opponents_turn();
+        let mut is_red = check_button_color(&bot.cords) == "red";
+        loop {
+            is_red = check_button_color(&bot.cords) == "red";
+            let main_text = check_main_region_text(
+                bot.screen_width as u32,
+                bot.screen_height as u32,
+                is_red,
+            );
+            tracing::info!("(Opponent turn) Main region text: {}", main_text);
+            if main_text.contains("Next") {
+                tracing::info!("Opponent turn phase finished.");
+                break;
+            }
+            sleep(Duration::from_secs(2));
+        }
         sleep(Duration::from_secs(1));
     }
 
