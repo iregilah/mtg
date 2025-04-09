@@ -17,21 +17,7 @@ impl OpponentsTurnState {
 impl State for OpponentsTurnState {
     fn update(&mut self, bot: &mut Bot) {
         tracing::info!("OpponentsTurnState: handling opponent's turn.");
-        let mut is_red = check_button_color(&bot.cords) == "red";
-        loop {
-            is_red = check_button_color(&bot.cords) == "red";
-            let main_text = check_main_region_text(
-                bot.screen_width as u32,
-                bot.screen_height as u32,
-                is_red,
-            );
-            tracing::info!("(Opponent turn) Main region text: {}", main_text);
-            if main_text.contains("Next") {
-                tracing::info!("Opponent turn phase finished.");
-                break;
-            }
-            sleep(Duration::from_secs(2));
-        }
+        Self::process_opponents_turn(self, bot);
         sleep(Duration::from_secs(1));
     }
 
@@ -39,5 +25,21 @@ impl State for OpponentsTurnState {
         tracing::info!("OpponentsTurnState: transitioning to FirstMainPhaseState.");
         // Ha vége az ellenfél körének, visszalépünk az első main phase-be
         Box::new(FirstMainPhaseState::new())
+    }
+}
+
+impl OpponentsTurnState {
+    fn process_opponents_turn(&self, bot: &mut Bot) {
+        let mut is_red = check_button_color(&bot.cords) == "red";
+        loop {
+            is_red = check_button_color(&bot.cords) == "red";
+            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, is_red);
+            tracing::info!("(Opponent turn) Main region text: {}", main_text);
+            if main_text.contains("Next") {
+                tracing::info!("Opponent turn phase finished.");
+                break;
+            }
+            sleep(Duration::from_secs(2));
+        }
     }
 }

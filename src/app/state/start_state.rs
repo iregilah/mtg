@@ -22,7 +22,7 @@ impl State for StartState {
         set_cursor_pos(bot.cords.home_button.0, bot.cords.home_button.1);
         left_click();
         sleep(Duration::from_secs(1));
-        if let Some(hwnd) = find_window("MTGA") {
+        if let Some(hwnd) = find_window("MTGA_me") {
             unsafe {
                 winapi::um::winuser::SetForegroundWindow(hwnd);
                 winapi::um::winuser::SetActiveWindow(hwnd);

@@ -18,17 +18,7 @@ impl SecondMainPhaseState {
 impl State for SecondMainPhaseState {
     fn update(&mut self, bot: &mut Bot) {
         tracing::info!("SecondMainPhaseState: handling second main phase and end turn.");
-        loop {
-            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, false);
-            tracing::info!("(Second main phase) Main region text: {}", main_text);
-            if main_text.contains("End Turn") {
-                press_key(winapi::um::winuser::VK_SPACE as u16);
-                break;
-            } else if main_text.contains("Next") {
-                press_key(winapi::um::winuser::VK_SPACE as u16);
-            }
-            sleep(Duration::from_secs(2));
-        }
+        Self::process_end_turn(self, bot);
         bot.land_played_this_turn = false;
         for creature in &mut bot.battlefield_creatures {
             creature.summoning_sickness = false;
@@ -38,5 +28,21 @@ impl State for SecondMainPhaseState {
     fn next(&mut self) -> Box<dyn State> {
         tracing::info!("SecondMainPhaseState: transitioning to new round (StartState).");
         Box::new(StartState::new())
+    }
+}
+
+impl SecondMainPhaseState {
+    fn process_end_turn(&self, bot: &mut Bot) {
+        loop {
+            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, false);
+            tracing::info!("(Second main phase) Main region text: {}", main_text);
+            if main_text.contains("End Turn") {
+                press_key(winapi::um::winuser::VK_SPACE as u16);
+                break;
+            } else if main_text.contains("Next") {
+                press_key(winapi::um::winuser::VK_SPACE as u16);
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
     }
 }

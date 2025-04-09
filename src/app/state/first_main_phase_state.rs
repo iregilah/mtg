@@ -44,27 +44,42 @@ impl FirstMainPhaseState {
 impl State for FirstMainPhaseState {
     fn update(&mut self, bot: &mut Bot) {
         tracing::info!("FirstMainPhaseState: handling first main phase.");
+        self.play_land_phase(bot);
+        tracing::info!("Available mana for this turn after playing lands: {}", bot.land_number);
+        let mana_available = self.cast_creatures_phase(bot);
+        tracing::info!("Main phase finished. Remaining mana: {}.", mana_available);
+    }
+
+    fn next(&mut self) -> Box<dyn State> {
+        tracing::info!("FirstMainPhaseState: transitioning to AttackPhaseState.");
+        Box::new(AttackPhaseState::new())
+    }
+}
+
+impl FirstMainPhaseState {
+    fn play_land_phase(&mut self, bot: &mut Bot) {
         if !bot.land_played_this_turn {
             if let Some((index, card_text)) = bot.cards_texts.iter().enumerate()
-                .find(|(_i, text)| LAND_NAMES.iter().any(|&land| text.contains(land))) {
+                .find(|(_i, text)| crate::app::card::LAND_NAMES.iter().any(|&land| text.contains(land))) {
                 tracing::info!("Found land card '{}' at index {}. Playing it.", card_text, index);
                 Self::play_card(bot, index);
                 bot.land_number += 1;
                 bot.land_played_this_turn = true;
             }
         }
+    }
+
+    fn cast_creatures_phase(&mut self, bot: &mut Bot) -> u32 {
         let mut mana_available = bot.land_number;
-        tracing::info!("Available mana for this turn after playing lands: {}", mana_available);
         let creature_indices: Vec<usize> = bot.cards_texts.iter().enumerate()
-            .filter(|(_i, text)| CREATURE_NAMES.iter().any(|&name| text.contains(name)))
+            .filter(|(_i, text)| crate::app::card::CREATURE_NAMES.iter().any(|&name| text.contains(name)))
             .map(|(i, _)| i)
             .collect();
-
         for &index in &creature_indices {
             let card_text = &bot.cards_texts[index];
-            if let Some(card) = parse_card(card_text) {
-                if let CardType::Creature(creature) = card {
-                    let cost = parse_mana_cost(&creature.name);
+            if let Some(card) = crate::app::card::parse_card(card_text) {
+                if let crate::app::card::CardType::Creature(creature) = card {
+                    let cost = crate::app::card::parse_mana_cost(&creature.name);
                     let colored_cost = cost.colored();
                     let total_cost = cost.total();
                     if mana_available >= colored_cost {
@@ -92,11 +107,6 @@ impl State for FirstMainPhaseState {
                 }
             }
         }
-        tracing::info!("Main phase finished. Remaining mana: {}.", mana_available);
-    }
-
-    fn next(&mut self) -> Box<dyn State> {
-        tracing::info!("FirstMainPhaseState: transitioning to AttackPhaseState.");
-        Box::new(AttackPhaseState::new())
+        mana_available
     }
 }
