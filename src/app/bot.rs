@@ -65,6 +65,99 @@ impl Bot {
             time_waiting_threshold: Duration::from_secs(120), // 2 perc
         }
     }
+    pub fn get_card_text(&self, index: usize) -> String {
+        use crate::app::cards_positions::get_card_positions;
+        // Lekérjük a kártya pozíciókat
+        let positions = get_card_positions(self.card_count, self.screen_width as u32);
+        if index >= positions.len() {
+            tracing::error!("Index {} out of range", index);
+            return String::new();
+        }
+        let pos = positions[index];
+        let card_y = ((self.screen_height as f64) * 0.97).ceil() as i32;
+        ui::set_cursor_pos(pos.hover_x as i32, card_y);
+        tracing::info!("Hovering over card {} at ({}, {})", index, pos.hover_x, card_y);
+        std::thread::sleep(Duration::from_secs(2)); // Várakozás a tooltip megjelenésére
+
+        // Képernyőkép készítése
+        let screenshot = match screenshot::get_screenshot(0) {
+            Ok(scn) => scn,
+            Err(_) => {
+                tracing::error!("Screenshot error on card {}", index);
+                return String::new();
+            }
+        };
+        let width = screenshot.width() as u32;
+        let height = screenshot.height() as u32;
+        let data_vec = unsafe {
+            std::slice::from_raw_parts(screenshot.raw_data(), screenshot.raw_len()).to_vec()
+        };
+        let image_buf_opt = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, data_vec);
+        if image_buf_opt.is_none() {
+            tracing::error!("Image buffer error on card {}", index);
+            return String::new();
+        }
+        let image_buf = image_buf_opt.unwrap();
+        let dyn_img = image::DynamicImage::ImageRgba8(image_buf);
+
+        // OCR vertikális határértékek kiszámítása (a régi arányok alapján)
+        let ocr_y1 = ((232.606 / 381.287) * (self.screen_height as f64)).ceil() as u32;
+        let ocr_y2 = ((240.832 / 381.287) * (self.screen_height as f64)).ceil() as u32;
+        if ocr_y2 <= ocr_y1 {
+            tracing::error!("Invalid OCR vertical region.");
+            return String::new();
+        }
+        let cropped = image::imageops::crop_imm(
+            &dyn_img,
+            pos.ocr_x1,
+            ocr_y1,
+            pos.ocr_x2 - pos.ocr_x1,
+            ocr_y2 - ocr_y1,
+        ).to_image();
+        let preprocessed = ocr::preprocess_image(&image::DynamicImage::ImageRgba8(cropped));
+        let temp_filename = format!("temp_card_{}.png", index);
+        if let Err(e) = preprocessed.save(&temp_filename) {
+            tracing::error!("Error saving temporary image for card {}: {:?}", index, e);
+            return String::new();
+        }
+        // Tesseract OCR futtatása
+        let output = std::process::Command::new(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+            .arg(&temp_filename)
+            .arg("stdout")
+            .arg("-l")
+            .arg("eng")
+            .arg("--psm")
+            .arg("7")
+            .output();
+        let card_text = match output {
+            Ok(output) if output.status.success() => {
+                let raw_text = String::from_utf8_lossy(&output.stdout).into_owned();
+                ocr::sanitize_ocr_text(raw_text.trim())
+            }
+            Ok(output) => {
+                tracing::error!("Tesseract error for card {}: {}", index, String::from_utf8_lossy(&output.stderr));
+                String::from("OCR failed")
+            }
+            Err(e) => {
+                tracing::error!("Error running Tesseract for card {}: {:?}", index, e);
+                String::from("OCR failed")
+            }
+        };
+        tracing::info!("Card {} text: {}", index, card_text);
+        card_text
+    }
+
+    // Módosított examine_cards() a régi logika alapján
+    pub fn examine_cards(&mut self) {
+        self.cards_texts.clear(); // Töröljük a korábbi eredményeket
+        for i in 0..self.card_count {
+            let text = self.get_card_text(i);
+            tracing::info!("Card {} text: {}", i, text);
+            self.cards_texts.push(text);
+        }
+        tracing::info!("OCR results for cards: {:?}", self.cards_texts);
+    }
+
 
     // Alap UI funkciók (még régi kódból is átemelve)
     pub fn left_click(&self) {
@@ -174,14 +267,6 @@ impl Bot {
         }
         tracing::info!("Mulligan state completed. Ready.");
         sleep(Duration::from_secs(1));
-    }
-
-    /// A kártyák hooverelése – itt az OCR eredményeket kéne beolvasni.
-    /// (A valós implementációban itt kellene iterálni a kártyapozíciókon.)
-    pub fn examine_cards(&mut self) {
-        self.cards_texts.clear();
-        tracing::info!("Examining cards (dummy implementation).");
-        // Például itt az OCR eredmények beolvasása történhetne.
     }
 
     /// A "Submit 0" fázis kezelése.
