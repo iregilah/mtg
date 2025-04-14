@@ -6,11 +6,15 @@ use std::time::{Duration, Instant};
 use image::{DynamicImage, ImageBuffer, Rgba};
 use image::imageops::crop_imm;
 use screenshot::get_screenshot;
-use crate::app::ui::{Cords, set_cursor_pos};
-use crate::app::card::Creature;
+
+// Fontos: az app modulban legyenek a megfelelő folder struktúrák (ui, card, creature_positions stb.)
+use crate::app::ui::{Cords, set_cursor_pos, left_click, press_key};
 use crate::app::cards_positions::get_card_positions;
 use crate::app::ocr::{preprocess_image, sanitize_ocr_text};
-use crate::app::ui;
+
+
+// <- Integráció: importáljuk a creature_positions modulból a két függvényt.
+use crate::app::creature_positions::{get_own_creature_positions, get_opponent_creature_positions};
 
 pub struct Bot {
     pub end_game_counter: u32,         // Játék végi számláló (előbb, mint majd a teljes játéklogika részletezése megtörténik).
@@ -28,7 +32,9 @@ pub struct Bot {
     pub last_opponent_turn: bool,        // Logikai érték: utolsó körben ellenfél lépett-e.
     pub opponent_turn_counter: usize,    // Az ellenfél kör számlálója.
     pub land_played_this_turn: bool,     // true, ha a jelenlegi körben már kijátszottuk a land-et.
-    pub battlefield_creatures: Vec<Creature>, // A battlefield–en lévő creature–k.
+    pub battlefield_creatures: Vec<crate::app::card_library::Card>,
+    pub battlefield_opponent_creatures: Vec<crate::app::card_library::Card>,
+
 }
 
 impl Bot {
@@ -36,7 +42,7 @@ impl Bot {
         unsafe {
             let screen_width = winapi::um::winuser::GetSystemMetrics(winapi::um::winuser::SM_CXSCREEN);
             let screen_height = winapi::um::winuser::GetSystemMetrics(winapi::um::winuser::SM_CYSCREEN);
-            let cords = ui::Cords::new(screen_width, screen_height);
+            let cords = Cords::new(screen_width, screen_height);
             Self {
                 end_game_counter: 0,
                 end_game_threshold: 3,
@@ -54,8 +60,75 @@ impl Bot {
                 opponent_turn_counter: 0,
                 land_played_this_turn: false,
                 battlefield_creatures: Vec::new(),
+                battlefield_opponent_creatures: Vec::new(),
             }
         }
+    }
+
+    /// Frissíti a battlefield–en lévő creature–öket mind a saját, mind az ellenfél oldalon.
+    pub fn update_battlefield_creatures(&mut self) {
+        // Dummy függvény: az OCR alapján meghatározott creature count
+        let own_count = self.get_own_creature_count_from_ocr();
+        let opp_count = self.get_opponent_creature_count_from_ocr();
+
+        let own_positions = get_own_creature_positions(own_count, self.screen_width as u32, self.screen_height as u32);
+        let opponent_positions = get_opponent_creature_positions(opp_count, self.screen_width as u32, self.screen_height as u32);
+
+        self.battlefield_creatures.clear();
+        for (i, pos) in own_positions.iter().enumerate() {
+            tracing::info!("Own creature {} OCR region: x1={}, x2={}, y1={}, y2={}",
+                           i, pos.ocr_x1, pos.ocr_x2, pos.ocr_y1, pos.ocr_y2);
+            // Létrehozunk egy dummy creature kártyát a card_library struktúrából.
+            let dummy_creature = crate::app::card_library::Card {
+                name: format!("Saját Creature {}", i + 1),
+                card_type: crate::app::card_library::CardType::Creature(
+                    crate::app::card_library::Creature {
+                        name: format!("Saját Creature {}", i + 1),
+                        summoning_sickness: false,
+                        power: 1,
+                        toughness: 1,
+                    }
+                ),
+                mana_cost: crate::app::card_library::ManaCost {
+                    colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0
+                },
+                attributes: vec![],
+                triggers: vec![],
+            };
+            self.battlefield_creatures.push(dummy_creature);
+        }
+
+        self.battlefield_opponent_creatures.clear();
+        for (i, pos) in opponent_positions.iter().enumerate() {
+            tracing::info!("Opponent creature {} OCR region: x1={}, x2={}, y1={}, y2={}",
+                           i, pos.ocr_x1, pos.ocr_x2, pos.ocr_y1, pos.ocr_y2);
+            let dummy_creature = crate::app::card_library::Card {
+                name: format!("Ellenfél Creature {}", i + 1),
+                card_type: crate::app::card_library::CardType::Creature(
+                    crate::app::card_library::Creature {
+                        name: format!("Ellenfél Creature {}", i + 1),
+                        summoning_sickness: false,
+                        power: 1,
+                        toughness: 1,
+                    }
+                ),
+                mana_cost: crate::app::card_library::ManaCost {
+                    colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0
+                },
+                attributes: vec![],
+                triggers: vec![],
+            };
+            self.battlefield_opponent_creatures.push(dummy_creature);
+        }
+    }
+
+    // Dummy függvények a creature count meghatározásához.
+    fn get_own_creature_count_from_ocr(&self) -> usize {
+        if self.battlefield_creatures.is_empty() { 1 } else { self.battlefield_creatures.len() }
+    }
+
+    fn get_opponent_creature_count_from_ocr(&self) -> usize {
+        1  // Demo célból egy fix érték
     }
 
     pub fn examine_cards(&mut self) {
@@ -69,7 +142,6 @@ impl Bot {
     }
 
     pub fn get_card_text(&self, index: usize) -> String {
-
         let positions = get_card_positions(self.card_count, self.screen_width as u32);
         if index >= positions.len() {
             tracing::error!("Index {} out of range", index);
@@ -103,7 +175,6 @@ impl Bot {
         let image_buf = image_buf_opt.unwrap();
         let dyn_img = DynamicImage::ImageRgba8(image_buf);
 
-        // Ellenőrzés: az OCR horizontális intervallum helyes-e.
         if pos.ocr_x2 <= pos.ocr_x1 || pos.ocr_x2 > width {
             tracing::error!("Invalid OCR horizontal region for card {}", index);
             return String::new();

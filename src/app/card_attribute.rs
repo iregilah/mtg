@@ -1,35 +1,23 @@
-// card_attribute.rs
-
+use std::fmt::Debug;
 #[derive(Debug, Clone)]
 pub enum Effect {
-    // Saját attribútum módosítás: például +1/+1 counter hozzáadása vagy más stat változás.
     SelfAttributeChange(AttributeChange),
-    // Célkártya sebzése: tartalmazza a Damage értéket és a cél szűrőt.
     DamageTarget { damage: Damage, target_filter: TargetFilter },
-    // Célkártya megsemmisítése.
     DestroyTarget { target_filter: TargetFilter },
-    // Célkártya elűzése.
     ExileTarget { target_filter: TargetFilter },
-    // Poliferate: a kiválasztott counter típus növelése.
     Poliferate { counter_type: CounterType },
-    // Teljes életpont visszaállítása.
     HealSelfToFull,
-    // Új creature létrehozása.
     SpawnNewCreature,
-    // A kártya saját életpontjának 1-re állítása.
     SetSelfHealthToOne,
-    // Egy attribútum eltávolítása.
     RemoveAttribute,
-    // Token csatolása.
     AttachToken { token: Token },
-    // Enchantment csatolása.
     AttachEnchantment { enchantment: Enchantment },
 }
 
 #[derive(Debug, Clone)]
 pub struct AttributeChange {
-    pub attack_change: i32,
-    pub health_change: i32,
+    pub power: i32,
+    pub toughness: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -62,14 +50,98 @@ pub struct Token {
     pub name: String,
 }
 
-pub trait CardAttribute {
-    fn trigger(&self) -> Option<Effect> {
+#[derive(Debug, Clone)]
+pub struct Enchantment {
+    pub name: String,
+}
+
+pub trait CloneCardAttribute {
+    fn clone_box(&self) -> Box<dyn CardAttribute<Output = Effect>>;
+}
+
+impl<T> CloneCardAttribute for T
+where
+    T: 'static + CardAttribute<Output = Effect> + Clone,
+{
+    fn clone_box(&self) -> Box<dyn CardAttribute<Output = Effect>> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn CardAttribute<Output = Effect>> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
+pub trait CardAttribute: Debug + CloneCardAttribute {
+    type Output;
+    fn on_trigger(&self) -> Option<Self::Output> {
         None
     }
-    fn turn_ended(&mut self) -> Option<Effect> {
+    fn on_turn_ended(&mut self) -> Option<Self::Output> {
         None
     }
-    fn owner_died(&mut self) -> Option<Effect> {
+    fn on_owner_died(&mut self) -> Option<Self::Output> {
         None
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModifyAttackDefense {
+    pub power: i32,
+    pub toughness: i32,
+}
+
+impl CardAttribute for ModifyAttackDefense {
+    type Output = Effect;
+
+    fn on_trigger(&self) -> Option<Self::Output> {
+        Some(Effect::SelfAttributeChange(AttributeChange {
+            power: self.power,
+            toughness: self.toughness,
+        }))
+    }
+    fn on_turn_ended(&mut self) -> Option<Self::Output> {
+        Some(Effect::RemoveAttribute)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PoliferateOnDamage;
+
+impl CardAttribute for PoliferateOnDamage {
+    type Output = Effect;
+
+    fn on_trigger(&self) -> Option<Self::Output> {
+        Some(Effect::Poliferate { counter_type: CounterType::Poison })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SpawnTokenOnDeath;
+
+impl CardAttribute for SpawnTokenOnDeath {
+    type Output = Effect;
+
+    fn on_owner_died(&mut self) -> Option<Self::Output> {
+        Some(Effect::SpawnNewCreature)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DamageEqualPowerOnDeath {
+    pub damage: Damage,
+    pub target_filter: TargetFilter,
+}
+
+impl CardAttribute for DamageEqualPowerOnDeath {
+    type Output = Effect;
+
+    fn on_owner_died(&mut self) -> Option<Self::Output> {
+        Some(Effect::DamageTarget {
+            damage: self.damage.clone(),
+            target_filter: self.target_filter.clone(),
+        })
     }
 }

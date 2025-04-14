@@ -20,8 +20,10 @@ impl State for SecondMainPhaseState {
         tracing::info!("SecondMainPhaseState: handling second main phase and end turn.");
         Self::process_end_turn(self, bot);
         bot.land_played_this_turn = false;
-        for creature in &mut bot.battlefield_creatures {
-            creature.summoning_sickness = false;
+        for card in &mut bot.battlefield_creatures {
+            if let crate::app::card_library::CardType::Creature(ref mut creature) = card.card_type {
+                creature.summoning_sickness = false;
+            }
         }
     }
 

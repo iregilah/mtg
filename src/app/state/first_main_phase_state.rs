@@ -4,7 +4,7 @@ use crate::app::bot::Bot;
 use crate::app::state::State;
 use std::thread::sleep;
 use std::time::Duration;
-use crate::app::card::{CardType, CREATURE_NAMES, LAND_NAMES, parse_card, parse_mana_cost};
+use crate::app::card_library::{CardType, CREATURE_NAMES, LAND_NAMES};
 use crate::app::cards_positions::get_card_positions;
 use crate::app::ui::{set_cursor_pos, left_click, press_key};
 use crate::app::state::attack_phase_state::AttackPhaseState;
@@ -17,7 +17,7 @@ impl State for FirstMainPhaseState {
         tracing::info!("FirstMainPhaseState: handling first main phase.");
         self.play_land_phase(bot);
         tracing::info!("Available mana for this turn after playing lands: {}", bot.land_number);
-        let mana_available = self.cast_creatures_phase(bot);
+        let mana_available = self.cast_instants_phase(bot);
         tracing::info!("Main phase finished. Remaining mana: {}.", mana_available);
     }
 
@@ -54,25 +54,72 @@ impl FirstMainPhaseState {
             }
         }
     }
+    /// A korábbi creature castolás részét kommenteljük ki, helyette csak az instantok (Burst Lightning, Lightning Strike) kijátszását végezzük.
+    // Helper function: eldönti, hogy az OCR-ből kapott szöveg tartalmazza-e a kártya nevét.
+    fn card_matches(card_name: &str, text: &str) -> bool {
+        text.contains(card_name)
+    }
 
-    /// Végrehajtja a creature castolás logikáját: végigiterál a kézben lévő creature-okon,
-    /// és ha elegendő mana áll rendelkezésre, kijátssza az adott kártyát, majd eltávolítja azt a kézből.
-    /// A függvény visszaadja a maradék mana értékét.
-    fn cast_creatures_phase(&mut self, bot: &mut Bot) -> u32 {
+    fn cast_instants_phase(&mut self, bot: &mut Bot) -> u32 {
         let mut mana_available = bot.land_number;
-        // Gyűjtsük össze a kézben lévő creature neveket (a statikus lista alapján)
-        let creature_names: Vec<String> = bot.cards_texts.iter()
-            .filter(|text| CREATURE_NAMES.iter().any(|&name| text.contains(name)))
+        // A library-t a card_library modulból kérjük le.
+        let card_library = crate::app::card_library::build_card_library();
+        let instant_names: Vec<String> = bot.cards_texts.iter()
+            .filter(|text| text.contains("Burst Lightning") || text.contains("Lightning Strike"))
             .cloned()
             .collect();
 
-        // Iterálunk a creature neveken; a kéz tartalma eltűnhet az eltávolítás miatt,
-        // ezért mindig keresünk a frissített listában.
+        for instant_name in instant_names {
+            if let Some(pos) = bot.cards_texts.iter().position(|text| text.contains(&instant_name)) {
+                if let Some(card) = card_library.values().find(|c| Self::card_matches(&c.name, &bot.cards_texts[pos])) {
+                    if let crate::app::card_library::CardType::Instant(_) = card.card_type {
+                        let cost = card.mana_cost.clone();
+                        let colored_cost = cost.colored();
+                        let total_cost = cost.total();
+                        if mana_available >= colored_cost {
+                            let leftover = mana_available - colored_cost;
+                            if leftover >= cost.colorless {
+                                tracing::info!(
+                                    "Casting instant '{}' ({} colorless, {} colored), total cost = {}",
+                                    card.name, cost.colorless, colored_cost, total_cost
+                                );
+                                Self::play_card(bot, pos);
+                                mana_available -= total_cost;
+                                bot.update_battlefield_creatures();
+                            } else {
+                                tracing::info!(
+                                    "Not enough leftover for colorless mana after paying colored cost for '{}'.",
+                                    card.name
+                                );
+                            }
+                        } else {
+                            tracing::info!(
+                                "Not enough colored mana to cast instant '{}'. Required: {} colored, available: {}",
+                                card.name, colored_cost, mana_available
+                            );
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!("Instant '{}' not found in hand.", instant_name);
+            }
+        }
+        mana_available
+    }
+
+    fn cast_creatures_phase(&mut self, bot: &mut Bot) -> u32 {
+        let mut mana_available = bot.land_number;
+        let card_library = crate::app::card_library::build_card_library();
+        let creature_names: Vec<String> = bot.cards_texts.iter()
+            .filter(|text| crate::app::card_library::CREATURE_NAMES.iter().any(|&name| text.contains(name)))
+            .cloned()
+            .collect();
+
         for creature_name in creature_names {
             if let Some(pos) = bot.cards_texts.iter().position(|text| text.contains(&creature_name)) {
-                if let Some(card) = parse_card(&bot.cards_texts[pos]) {
-                    if let CardType::Creature(creature) = card {
-                        let cost = parse_mana_cost(&creature.name);
+                if let Some(card) = card_library.values().find(|c| Self::card_matches(&c.name, &bot.cards_texts[pos])) {
+                    if let crate::app::card_library::CardType::Creature(ref creature) = card.card_type {
+                        let cost = card.mana_cost.clone();
                         let colored_cost = cost.colored();
                         let total_cost = cost.total();
                         if mana_available >= colored_cost {
@@ -83,11 +130,12 @@ impl FirstMainPhaseState {
                                     creature.name, cost.colorless, colored_cost, total_cost
                                 );
                                 Self::play_card(bot, pos);
-                                bot.battlefield_creatures.push(creature);
+                                // Az új creature kártyát elmentjük a battlefield_repositóriumba:
+                                bot.battlefield_creatures.push(card.clone());
                                 mana_available -= total_cost;
                             } else {
                                 tracing::info!(
-                                    "Not enough leftover for colorless after paying colored mana for '{}'. Required: {} colorless, leftover: {}",
+                                    "Not enough leftover for colorless mana after paying colored mana for '{}'. Required: {} colorless, leftover: {}",
                                     creature.name, cost.colorless, leftover
                                 );
                             }
@@ -105,6 +153,8 @@ impl FirstMainPhaseState {
         }
         mana_available
     }
+
+
 
     /// Végrehajtja a kijátszás műveletét: mozgatás, kattintás, majd a kijátszott kártya eltávolítása a kézből.
     fn play_card(bot: &mut Bot, card_index: usize) {

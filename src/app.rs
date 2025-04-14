@@ -1,9 +1,11 @@
 pub mod bot;
-pub mod card;
+pub mod card_library;
 pub mod cards_positions;
 pub mod ocr;
 pub mod ui;
 pub mod state;
+pub mod creature_positions;
+mod card_attribute;
 
 use bot::Bot;
 use std::error::Error;

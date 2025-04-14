@@ -43,7 +43,13 @@ impl State for AttackPhaseState {
 
 impl AttackPhaseState {
     fn can_attack(bot: &Bot) -> bool {
-        bot.battlefield_creatures.iter().any(|creature| !creature.summoning_sickness)
+        bot.battlefield_creatures.iter().any(|card| {
+            if let crate::app::card_library::CardType::Creature(creature) = &card.card_type {
+                !creature.summoning_sickness
+            } else {
+                false
+            }
+        })
     }
 
     fn process_attack_phase(&self, bot: &mut Bot) {
