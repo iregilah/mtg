@@ -9,6 +9,8 @@ use crate::app::state::opponents_turn_state::OpponentsTurnState;
 use crate::app::ui::{check_button_color, press_key};
 use crate::app::state::second_main_phase_state::SecondMainPhaseState;
 use crate::app::ui;
+//use regex::Regex;
+
 
 pub struct AttackPhaseState {
     no_attack: bool,
@@ -42,6 +44,15 @@ impl State for AttackPhaseState {
 }
 
 impl AttackPhaseState {
+    fn is_attackers_text(s: &str) -> bool {
+        // Egyszerű ellenőrzés: ha legalább két szó van, az első egy szám és a második "Attackers"
+        let tokens: Vec<&str> = s.split_whitespace().collect();
+        if tokens.len() >= 2 && tokens[1] == "Attackers" {
+            return tokens[0].parse::<u32>().is_ok();
+        }
+        false
+    }
+
     fn can_attack(bot: &Bot) -> bool {
         bot.battlefield_creatures.iter().any(|card| {
             if let crate::app::card_library::CardType::Creature(creature) = &card.card_type {
@@ -52,19 +63,46 @@ impl AttackPhaseState {
         })
     }
 
-    fn process_attack_phase(&self, bot: &mut Bot) {
-        let mut is_red = check_button_color(&bot.cords) == "red";
+    pub fn process_attack_phase(&self, bot: &mut Bot) {
+        // 1. Ciklus: addig várunk, amíg a main region text "All Attack"-et ad,
+        //    itt mindig a red button (white_invert_image) feldolgozását használjuk.
         loop {
-            is_red = check_button_color(&bot.cords) == "red";
-            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, is_red);
+            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, true);
             tracing::info!("(Attack phase) Main region text: {}", main_text);
             if main_text.contains("All Attack") {
                 press_key(winapi::um::winuser::VK_SPACE as u16);
+                sleep(Duration::from_secs(1));
                 break;
             } else if main_text.contains("Next") {
                 press_key(winapi::um::winuser::VK_SPACE as u16);
+                sleep(Duration::from_secs(1));
+            } else {
+                sleep(Duration::from_secs(2));
+            }
+        }
+
+        // 2. Ciklus: várjuk, hogy a main region text "X Attackers" formátumú legyen.
+        loop {
+            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, true);
+            tracing::info!("(Attack phase) Main region text after All Attack: {}", main_text);
+            if Self::is_attackers_text(&main_text) {
+                press_key(winapi::um::winuser::VK_SPACE as u16);
+                sleep(Duration::from_secs(1));
+                break;
             }
             sleep(Duration::from_secs(2));
+        }
+
+        // 3. Ciklus: amíg "Next" szerepel, kattintsuk a main region text-et
+        loop {
+            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, true);
+            tracing::info!("(Attack phase) Main region text in Next loop: {}", main_text);
+            if main_text.contains("Next") {
+                press_key(winapi::um::winuser::VK_SPACE as u16);
+                sleep(Duration::from_secs(1));
+            } else {
+                break;
+            }
         }
     }
 }

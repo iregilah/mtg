@@ -1,5 +1,3 @@
-// state/first_main_phase_state.rs
-
 use crate::app::bot::Bot;
 use crate::app::state::State;
 use std::thread::sleep;
@@ -9,16 +7,31 @@ use crate::app::cards_positions::get_card_positions;
 use crate::app::ui::{set_cursor_pos, left_click, press_key};
 use crate::app::state::attack_phase_state::AttackPhaseState;
 use crate::app::ui;
+use crate::app::creature_positions::{get_own_creature_positions, get_opponent_creature_positions};
 
 pub struct FirstMainPhaseState {}
 
 impl State for FirstMainPhaseState {
     fn update(&mut self, bot: &mut Bot) {
         tracing::info!("FirstMainPhaseState: handling first main phase.");
+        // 1. Először játsszuk ki a land-et (ha még nem történt meg)
         self.play_land_phase(bot);
-        tracing::info!("Available mana for this turn after playing lands: {}", bot.land_number);
-        let mana_available = self.cast_instants_phase(bot);
-        tracing::info!("Main phase finished. Remaining mana: {}.", mana_available);
+        tracing::info!("Available mana after playing land: {}", bot.land_number);
+
+        // 2. Frissítjük a battlefield creature–eket az új OCR-alapú módszerrel
+        Self::update_battlefield_creatures_from_ocr(bot);
+
+        // 3. Ha van (legalább 1) érvényes saját creature, akkor targetoljuk a kézben található első instantot;
+        //    különben kijátszunk egy creature-t.
+        if bot.battlefield_creatures.len() > 0 {
+            tracing::info!("Creature(ök) találhatók a battlefield-en – instant castolása következik.");
+            let mana_left = self.cast_instants_phase(bot);
+            tracing::info!("Main phase finished (instant cast). Remaining mana: {}.", mana_left);
+        } else {
+            tracing::info!("Nincs érvényes creature a battlefield-en – creature castolása következik.");
+            let mana_left = self.cast_creatures_phase(bot);
+            tracing::info!("Main phase finished (creature cast). Remaining mana: {}.", mana_left);
+        }
     }
 
     fn next(&mut self) -> Box<dyn State> {
@@ -31,38 +44,109 @@ impl FirstMainPhaseState {
     pub fn new() -> Self {
         Self {}
     }
-    /// Eltávolítja a kézből a megadott indexű kártyát, majd logolja a frissített kezet.
-    fn remove_card_from_hand(bot: &mut Bot, card_index: usize) {
-        if card_index < bot.cards_texts.len() {
-            let removed = bot.cards_texts.remove(card_index);
-            tracing::info!("Removed card '{}' from hand at index {}.", removed, card_index);
-            tracing::info!("Updated hand: {:?}", bot.cards_texts);
-            bot.card_count = bot.cards_texts.len();
-        } else {
-            tracing::warn!("Attempted to remove card at invalid index {}.", card_index);
-        }
-    }
-    /// Végrehajtja a land kijátszását, ha még nem történt meg.
+
+    /// Játssza ki a land-et, ha még nem történt meg
     fn play_land_phase(&mut self, bot: &mut Bot) {
         if !bot.land_played_this_turn {
             if let Some((index, card_text)) = bot.cards_texts.iter().enumerate()
-                .find(|(_i, text)| LAND_NAMES.iter().any(|&land| text.contains(land))) {
+                .find(|(_i, text)| LAND_NAMES.iter().any(|&land| text.contains(land)))
+            {
                 tracing::info!("Found land card '{}' at index {}. Playing it.", card_text, index);
                 Self::play_card(bot, index);
-                bot.land_number += 1; // Egy land 1 mana forrást jelent
+                bot.land_number += 1;
                 bot.land_played_this_turn = true;
             }
         }
     }
-    /// A korábbi creature castolás részét kommenteljük ki, helyette csak az instantok (Burst Lightning, Lightning Strike) kijátszását végezzük.
-    // Helper function: eldönti, hogy az OCR-ből kapott szöveg tartalmazza-e a kártya nevét.
-    fn card_matches(card_name: &str, text: &str) -> bool {
-        text.contains(card_name)
+
+    /// Új metódus: battlefield creature–ök frissítése OCR segítségével
+    /// Mindkét módszert (páratlan és páros) lefuttatjuk, és csak akkor tekintjük érvényesnek,
+    /// ha a kiolvasott eredményekből legalább 2 "értelmes" (két szó) név származott.
+    fn update_battlefield_creatures_from_ocr(bot: &mut Bot) {
+        // Saját creature–ök beolvasása:
+        let odd_positions = get_own_creature_positions(7, bot.screen_width as u32, bot.screen_height as u32);
+        let even_positions = get_own_creature_positions(8, bot.screen_width as u32, bot.screen_height as u32);
+
+        let mut valid_own_names = Vec::new();
+        for pos in odd_positions.into_iter().chain(even_positions.into_iter()) {
+            let text = crate::app::ocr::read_creature_text(pos, bot.screen_width as u32, bot.screen_height as u32);
+            if Self::is_valid_creature_name(&text) {
+                valid_own_names.push(text);
+            }
+        }
+        bot.battlefield_creatures.clear();
+        if valid_own_names.len() >= 2 {
+            for (i, name) in valid_own_names.into_iter().enumerate() {
+                let dummy_creature = crate::app::card_library::Card {
+                    name: name.clone(),
+                    card_type: crate::app::card_library::CardType::Creature(
+                        crate::app::card_library::Creature {
+                            name,
+                            summoning_sickness: false,
+                            power: 1,
+                            toughness: 1,
+                        }
+                    ),
+                    mana_cost: crate::app::card_library::ManaCost {
+                        colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0
+                    },
+                    attributes: vec![],
+                    triggers: vec![],
+                };
+                bot.battlefield_creatures.push(dummy_creature);
+            }
+            tracing::info!("Own battlefield creatures updated via OCR: {:?}", bot.battlefield_creatures.iter().map(|c| &c.name).collect::<Vec<_>>());
+        } else {
+            tracing::warn!("Nem sikerült legalább 2 érvényes creature nevet beolvasni a saját oldalon.");
+        }
+
+        // Az ellenfél creature–eit is lehet hasonló módon olvasni, itt csak demonstráció:
+        let odd_opp_positions = get_opponent_creature_positions(7, bot.screen_width as u32, bot.screen_height as u32);
+        let even_opp_positions = get_opponent_creature_positions(8, bot.screen_width as u32, bot.screen_height as u32);
+
+        let mut valid_opp_names = Vec::new();
+        for pos in odd_opp_positions.into_iter().chain(even_opp_positions.into_iter()) {
+            let text = crate::app::ocr::read_creature_text(pos, bot.screen_width as u32, bot.screen_height as u32);
+            if Self::is_valid_creature_name(&text) {
+                valid_opp_names.push(text);
+            }
+        }
+        bot.battlefield_opponent_creatures.clear();
+        if valid_opp_names.len() >= 2 {
+            for (i, name) in valid_opp_names.into_iter().enumerate() {
+                let dummy_creature = crate::app::card_library::Card {
+                    name: name.clone(),
+                    card_type: crate::app::card_library::CardType::Creature(
+                        crate::app::card_library::Creature {
+                            name,
+                            summoning_sickness: false,
+                            power: 1,
+                            toughness: 1,
+                        }
+                    ),
+                    mana_cost: crate::app::card_library::ManaCost {
+                        colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0
+                    },
+                    attributes: vec![],
+                    triggers: vec![],
+                };
+                bot.battlefield_opponent_creatures.push(dummy_creature);
+            }
+            tracing::info!("Opponent battlefield creatures updated via OCR: {:?}", bot.battlefield_opponent_creatures.iter().map(|c| &c.name).collect::<Vec<_>>());
+        } else {
+            tracing::warn!("Nem sikerült legalább 2 érvényes creature nevet beolvasni az ellenfél oldalon.");
+        }
     }
 
+    /// Segédfüggvény, mely azt vizsgálja, hogy a beolvasott szöveg érvényes creature névnek számít-e
+    /// (legalább 2 szóból áll)
+    fn is_valid_creature_name(name: &str) -> bool {
+        name.split_whitespace().count() >= 2
+    }
+
+    /// Az instantok kijátszásának meglévő metódusa
     fn cast_instants_phase(&mut self, bot: &mut Bot) -> u32 {
         let mut mana_available = bot.land_number;
-        // A library-t a card_library modulból kérjük le.
         let card_library = crate::app::card_library::build_card_library();
         let instant_names: Vec<String> = bot.cards_texts.iter()
             .filter(|text| text.contains("Burst Lightning") || text.contains("Lightning Strike"))
@@ -71,7 +155,7 @@ impl FirstMainPhaseState {
 
         for instant_name in instant_names {
             if let Some(pos) = bot.cards_texts.iter().position(|text| text.contains(&instant_name)) {
-                if let Some(card) = card_library.values().find(|c| Self::card_matches(&c.name, &bot.cards_texts[pos])) {
+                if let Some(card) = card_library.values().find(|c| text_contains(&c.name, &bot.cards_texts[pos])) {
                     if let crate::app::card_library::CardType::Instant(_) = card.card_type {
                         let cost = card.mana_cost.clone();
                         let colored_cost = cost.colored();
@@ -80,23 +164,24 @@ impl FirstMainPhaseState {
                             let leftover = mana_available - colored_cost;
                             if leftover >= cost.colorless {
                                 tracing::info!(
-                                    "Casting instant '{}' ({} colorless, {} colored), total cost = {}",
-                                    card.name, cost.colorless, colored_cost, total_cost
-                                );
+                                "Casting instant '{}' ({} colorless, {} colored), total cost = {}",
+                                card.name, cost.colorless, colored_cost, total_cost
+                            );
                                 Self::play_card(bot, pos);
                                 mana_available -= total_cost;
-                                bot.update_battlefield_creatures();
+                                // Helyettesítjük a Bot metódushívását a free függvény hívásával:
+                                Self::update_battlefield_creatures_from_ocr(bot);
                             } else {
                                 tracing::info!(
-                                    "Not enough leftover for colorless mana after paying colored cost for '{}'.",
-                                    card.name
-                                );
+                                "Not enough leftover for colorless mana after paying colored cost for '{}'.",
+                                card.name
+                            );
                             }
                         } else {
                             tracing::info!(
-                                "Not enough colored mana to cast instant '{}'. Required: {} colored, available: {}",
-                                card.name, colored_cost, mana_available
-                            );
+                            "Not enough colored mana to cast instant '{}'. Required: {} colored, available: {}",
+                            card.name, colored_cost, mana_available
+                        );
                         }
                     }
                 }
@@ -107,6 +192,7 @@ impl FirstMainPhaseState {
         mana_available
     }
 
+    /// A creature–kijátszás meglévő metódusa
     fn cast_creatures_phase(&mut self, bot: &mut Bot) -> u32 {
         let mut mana_available = bot.land_number;
         let card_library = crate::app::card_library::build_card_library();
@@ -117,7 +203,7 @@ impl FirstMainPhaseState {
 
         for creature_name in creature_names {
             if let Some(pos) = bot.cards_texts.iter().position(|text| text.contains(&creature_name)) {
-                if let Some(card) = card_library.values().find(|c| Self::card_matches(&c.name, &bot.cards_texts[pos])) {
+                if let Some(card) = card_library.values().find(|c| text_contains(&c.name, &bot.cards_texts[pos])) {
                     if let crate::app::card_library::CardType::Creature(ref creature) = card.card_type {
                         let cost = card.mana_cost.clone();
                         let colored_cost = cost.colored();
@@ -130,7 +216,6 @@ impl FirstMainPhaseState {
                                     creature.name, cost.colorless, colored_cost, total_cost
                                 );
                                 Self::play_card(bot, pos);
-                                // Az új creature kártyát elmentjük a battlefield_repositóriumba:
                                 bot.battlefield_creatures.push(card.clone());
                                 mana_available -= total_cost;
                             } else {
@@ -154,9 +239,7 @@ impl FirstMainPhaseState {
         mana_available
     }
 
-
-
-    /// Végrehajtja a kijátszás műveletét: mozgatás, kattintás, majd a kijátszott kártya eltávolítása a kézből.
+    /// Általános függvény a kijátszás lépéseihez: az egér mozgatása, kattintás, billentyű lenyomás, majd a kártya eltávolítása a kézből.
     fn play_card(bot: &mut Bot, card_index: usize) {
         let positions = get_card_positions(bot.card_count, bot.screen_width as u32);
         if card_index >= positions.len() {
@@ -174,4 +257,20 @@ impl FirstMainPhaseState {
         sleep(Duration::from_millis(150));
         Self::remove_card_from_hand(bot, card_index);
     }
+
+    fn remove_card_from_hand(bot: &mut Bot, card_index: usize) {
+        if card_index < bot.cards_texts.len() {
+            let removed = bot.cards_texts.remove(card_index);
+            tracing::info!("Removed card '{}' from hand at index {}.", removed, card_index);
+            tracing::info!("Updated hand: {:?}", bot.cards_texts);
+            bot.card_count = bot.cards_texts.len();
+        } else {
+            tracing::warn!("Attempte d to remove card at invalid index {}.", card_index);
+        }
+    }
+}
+
+// Egyszerű segédfüggvény, hogy az OCR eredmény tartalmazza-e a kártya nevét (nem csak részlet)
+fn text_contains(name: &str, ocr_text: &str) -> bool {
+    ocr_text.contains(name)
 }

@@ -16,6 +16,7 @@ impl OpponentsTurnState {
 
 impl State for OpponentsTurnState {
     fn update(&mut self, bot: &mut Bot) {
+        bot.land_played_this_turn = false; // máshová kéne majd tenni később
         tracing::info!("OpponentsTurnState: handling opponent's turn.");
         Self::process_opponents_turn(self, bot);
         sleep(Duration::from_secs(1));

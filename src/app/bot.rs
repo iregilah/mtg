@@ -15,6 +15,7 @@ use crate::app::ocr::{preprocess_image, sanitize_ocr_text};
 
 // <- Integráció: importáljuk a creature_positions modulból a két függvényt.
 use crate::app::creature_positions::{get_own_creature_positions, get_opponent_creature_positions};
+use crate::app::ui::{win32_get_color};
 
 pub struct Bot {
     pub end_game_counter: u32,         // Játék végi számláló (előbb, mint majd a teljes játéklogika részletezése megtörténik).
@@ -65,20 +66,114 @@ impl Bot {
         }
     }
 
-    /// Frissíti a battlefield–en lévő creature–öket mind a saját, mind az ellenfél oldalon.
-    pub fn update_battlefield_creatures(&mut self) {
-        // Dummy függvény: az OCR alapján meghatározott creature count
-        let own_count = self.get_own_creature_count_from_ocr();
-        let opp_count = self.get_opponent_creature_count_from_ocr();
 
-        let own_positions = get_own_creature_positions(own_count, self.screen_width as u32, self.screen_height as u32);
-        let opponent_positions = get_opponent_creature_positions(opp_count, self.screen_width as u32, self.screen_height as u32);
+    // 1. Pixelátlagoló segédfüggvények
+    fn get_average_color(x: i32, y: i32, width: i32, height: i32) -> (u8, u8, u8) {
+        let mut r_total: u32 = 0;
+        let mut g_total: u32 = 0;
+        let mut b_total: u32 = 0;
+        let mut count = 0;
+        for i in 0..width {
+            for j in 0..height {
+                let col = win32_get_color(x + i, y + j);
+                r_total += col.r as u32;
+                g_total += col.g as u32;
+                b_total += col.b as u32;
+                count += 1;
+            }
+        }
+        if count == 0 {
+            return (0, 0, 0);
+        }
+        (
+            (r_total / count) as u8,
+            (g_total / count) as u8,
+            (b_total / count) as u8,
+        )
+    }
 
-        self.battlefield_creatures.clear();
-        for (i, pos) in own_positions.iter().enumerate() {
-            tracing::info!("Own creature {} OCR region: x1={}, x2={}, y1={}, y2={}",
-                           i, pos.ocr_x1, pos.ocr_x2, pos.ocr_y1, pos.ocr_y2);
-            // Létrehozunk egy dummy creature kártyát a card_library struktúrából.
+    fn is_color_within_tolerance(color: (u8, u8, u8), target: (u8, u8, u8), tol: i32) -> bool {
+        let (r, g, b) = color;
+        let (tr, tg, tb) = target;
+        (r as i32 - tr as i32).abs() <= tol &&
+            (g as i32 - tg as i32).abs() <= tol &&
+            (b as i32 - tb as i32).abs() <= tol
+    }
+
+    // 2. Creature-számolási logika egy oldalon (saját vagy ellenfél)
+    fn detect_creature_count_for_side(screen_width: u32, screen_height: u32, is_opponent: bool) -> usize {
+        let screen_width_f = screen_width as f64;
+        let screen_height_f = screen_height as f64;
+        // Választott y sáv az adott oldalhoz
+        let (y1_norm, y2_norm) = if is_opponent {
+            (101.761, 104.891)
+        } else {
+            (185.141, 188.731)
+        };
+        let y1 = ((y1_norm / 381.287) * screen_height_f).ceil() as i32;
+        let y2 = ((y2_norm / 381.287) * screen_height_f).ceil() as i32;
+        let region_height = y2 - y1;
+        // A vizsgálandó téglalap szélessége: (4.4 / 677.292) * screen_width
+        let rect_width = ((4.4 / 677.292) * screen_width_f).ceil() as i32;
+        let screen_center_x = (screen_width as i32) / 2;
+        let center_rect_x = screen_center_x - rect_width / 2;
+
+        let target_color = (210, 175, 157);
+        let tol = 10;
+
+        // Először vizsgáljuk a képernyő közepén levő téglalapot
+        let center_color = Self::get_average_color(center_rect_x, y1, rect_width, region_height);
+        let center_is_card = Self::is_color_within_tolerance(center_color, target_color, tol);
+
+        if center_is_card {
+            // Páratlan eset: indulás 1 creature-vel, majd lépésenként +2 addig, amíg maximum 7 creature van
+            let mut count = 1;
+            let step = ((69.0 / 677.292) * screen_width_f).ceil() as i32;
+            let mut current_center_x = screen_center_x - step;
+            while count < 7 && current_center_x - rect_width / 2 >= 0 {
+                let sample_x = current_center_x - rect_width / 2;
+                let sample_color = Self::get_average_color(sample_x, y1, rect_width, region_height);
+                if Self::is_color_within_tolerance(sample_color, target_color, tol) {
+                    count += 2;
+                    current_center_x -= step;
+                } else {
+                    break;
+                }
+            }
+            count
+        } else {
+            // Páros eset: indulás 0 creature-vel, kezdő pozíció: (34.492/677.292)*screen_width,
+            // majd lépésenként +2, maximum 8 creature
+            let mut count = 0;
+            let start_x = ((34.492 / 677.292) * screen_width_f).ceil() as i32;
+            let step = ((69.0 / 677.292) * screen_width_f).ceil() as i32;
+            let mut current_x = start_x;
+            while count < 8 && current_x - rect_width / 2 >= 0 {
+                let sample_x = current_x - rect_width / 2;
+                let sample_color = Self::get_average_color(sample_x, y1, rect_width, region_height);
+                if Self::is_color_within_tolerance(sample_color, target_color, tol) {
+                    count += 2;
+                    current_x -= step;
+                } else {
+                    break;
+                }
+            }
+            count
+        }
+    }
+
+    // 3. Frissítő függvény, amely a creature_positions modul szerint feltölti a battlefield_creatures vektorokat
+    pub fn update_battlefield_creatures_from_ocr(bot: &mut Bot) {
+        let own_count = Self::detect_creature_count_for_side(bot.screen_width as u32, bot.screen_height as u32, false);
+        let opp_count = Self::detect_creature_count_for_side(bot.screen_width as u32, bot.screen_height as u32, true);
+
+        tracing::info!("Detected own creature count: {}", own_count);
+        tracing::info!("Detected opponent creature count: {}", opp_count);
+
+        // Saját creature–ök feltöltése
+        let own_positions = get_own_creature_positions(own_count, bot.screen_width as u32, bot.screen_height as u32);
+        bot.battlefield_creatures.clear();
+        for (i, _pos) in own_positions.iter().enumerate() {
             let dummy_creature = crate::app::card_library::Card {
                 name: format!("Saját Creature {}", i + 1),
                 card_type: crate::app::card_library::CardType::Creature(
@@ -89,19 +184,17 @@ impl Bot {
                         toughness: 1,
                     }
                 ),
-                mana_cost: crate::app::card_library::ManaCost {
-                    colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0
-                },
+                mana_cost: crate::app::card_library::ManaCost { colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0 },
                 attributes: vec![],
                 triggers: vec![],
             };
-            self.battlefield_creatures.push(dummy_creature);
+            bot.battlefield_creatures.push(dummy_creature);
         }
 
-        self.battlefield_opponent_creatures.clear();
-        for (i, pos) in opponent_positions.iter().enumerate() {
-            tracing::info!("Opponent creature {} OCR region: x1={}, x2={}, y1={}, y2={}",
-                           i, pos.ocr_x1, pos.ocr_x2, pos.ocr_y1, pos.ocr_y2);
+        // Ellenfél creature–ök feltöltése
+        let opp_positions = get_opponent_creature_positions(opp_count, bot.screen_width as u32, bot.screen_height as u32);
+        bot.battlefield_opponent_creatures.clear();
+        for (i, _pos) in opp_positions.iter().enumerate() {
             let dummy_creature = crate::app::card_library::Card {
                 name: format!("Ellenfél Creature {}", i + 1),
                 card_type: crate::app::card_library::CardType::Creature(
@@ -112,23 +205,12 @@ impl Bot {
                         toughness: 1,
                     }
                 ),
-                mana_cost: crate::app::card_library::ManaCost {
-                    colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0
-                },
+                mana_cost: crate::app::card_library::ManaCost { colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0 },
                 attributes: vec![],
                 triggers: vec![],
             };
-            self.battlefield_opponent_creatures.push(dummy_creature);
+            bot.battlefield_opponent_creatures.push(dummy_creature);
         }
-    }
-
-    // Dummy függvények a creature count meghatározásához.
-    fn get_own_creature_count_from_ocr(&self) -> usize {
-        if self.battlefield_creatures.is_empty() { 1 } else { self.battlefield_creatures.len() }
-    }
-
-    fn get_opponent_creature_count_from_ocr(&self) -> usize {
-        1  // Demo célból egy fix érték
     }
 
     pub fn examine_cards(&mut self) {
