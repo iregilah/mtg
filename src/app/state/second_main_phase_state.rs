@@ -5,27 +5,37 @@ use std::time::Duration;
 use crate::app::ocr::check_main_region_text;
 use crate::app::ui::press_key;
 use crate::app::state::start_state::StartState;
+use crate::app::card_library::{CardType, CREATURE_NAMES, LAND_NAMES};
+use crate::app::card_library::CardType::Creature;
 
 
 pub struct SecondMainPhaseState {}
 
-impl SecondMainPhaseState {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
 
 impl State for SecondMainPhaseState {
     fn update(&mut self, bot: &mut Bot) {
-        tracing::info!("SecondMainPhaseState: handling second main phase and end turn.");
-        Self::process_end_turn(self, bot);
-        bot.land_played_this_turn = false;
-        for card in &mut bot.battlefield_creatures {
-            if let crate::app::card_library::CardType::Creature(ref mut creature) = card.card_type {
-                creature.summoning_sickness = false;
-            }
+        tracing::info!("SecondMainPhaseState: handling second main phase.");
+
+        // 1. Első ellenőrzés: normál feldolgozás
+        if !self.initial_check(bot) {
+            return;
         }
+
+        // 2. Creature castolási akciók végrehajtása
+        self.process_casting(bot);
+
+        // 3. Új ellenőrzés: ha most már "Opponent's Turn" szerepel a szövegben, kilépünk
+        if !self.post_cast_check(bot) {
+            return;
+        }
+
+        // 4. End Turn folyamat: red button feldolgozással
+        self.process_end_turn(bot);
+
+        // 5. Állapot reset
+        self.reset_state(bot);
     }
+
 
     fn next(&mut self) -> Box<dyn State> {
         tracing::info!("SecondMainPhaseState: transitioning to new round (StartState).");
@@ -33,18 +43,96 @@ impl State for SecondMainPhaseState {
     }
 }
 
+
+
 impl SecondMainPhaseState {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    /// Ellenőrzi a normál módú main region szöveget.
+    /// Ha "Opponent's Turn" szerepel, visszaadja false értékkel, jelezve, hogy nem kell tovább menni.
+    fn initial_check(&self, bot: &mut Bot) -> bool {
+        let main_text = check_main_region_text(
+            bot.screen_width as u32,
+            bot.screen_height as u32,
+            false,
+        );
+        tracing::info!("(Initial check) Main region text (normal): {}", main_text);
+        if main_text.contains("Opponent's Turn") {
+            tracing::info!("Detected 'Opponent's Turn' during initial check.");
+            return false;
+        }
+        true
+    }
+
+    /// Ha van elegendő mana és a kézben creature kártya van, akkor meghívja a Bot belső cast_creature metódusát,
+    /// majd frissíti a battlefield állapotot.
+    fn process_casting(&self, bot: &mut Bot) {
+        if bot.land_number > 0 {
+            let creature_in_hand = bot.cards_texts.iter().any(|text| {
+                CREATURE_NAMES.iter().any(|&name| text.contains(name))
+            });
+            if creature_in_hand {
+                tracing::info!("Sufficient mana and creature card detected. Casting a creature.");
+                // A Bot központi metódusa felel a creature castolásáért.
+                bot.cast_creatures();
+                Bot::update_battlefield_creatures_from_ocr(bot);
+            }
+        }
+    }
+
+    /// Újra ellenőrzi a normál módú main region szöveget, és ha "Opponent's Turn" szerepel,
+    /// visszaadja false értékkel.
+    fn post_cast_check(&self, bot: &mut Bot) -> bool {
+        let main_text_after = check_main_region_text(
+            bot.screen_width as u32,
+            bot.screen_height as u32,
+            false,
+        );
+        tracing::info!(
+            "(Post-cast check) Main region text (normal): {}",
+            main_text_after
+        );
+        if main_text_after.contains("Opponent's Turn") {
+            tracing::info!("Detected 'Opponent's Turn' after casting.");
+            return false;
+        }
+        true
+    }
+
+    /// A red button (white_invert_image) módszert használva olvassa a main region szöveget,
+    /// és kattint azokra a helyzetekre, amikor "Next" szerepel, míg "End Turn" nem jön.
     fn process_end_turn(&self, bot: &mut Bot) {
         loop {
-            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, false);
-            tracing::info!("(Second main phase) Main region text: {}", main_text);
-            if main_text.contains("End Turn") {
+            let main_text_red = check_main_region_text(
+                bot.screen_width as u32,
+                bot.screen_height as u32,
+                true,
+            );
+            tracing::info!("(Red processing) Main region text: {}", main_text_red);
+            if main_text_red.contains("Next") {
+                tracing::info!("Detected 'Next' in red mode. Clicking...");
+                press_key(winapi::um::winuser::VK_SPACE as u16);
+                sleep(Duration::from_secs(1));
+            } else if main_text_red.contains("End Turn") {
+                tracing::info!("Detected 'End Turn' in red mode. Clicking to end turn.");
                 press_key(winapi::um::winuser::VK_SPACE as u16);
                 break;
-            } else if main_text.contains("Next") {
-                press_key(winapi::um::winuser::VK_SPACE as u16);
+            } else {
+                sleep(Duration::from_secs(2));
             }
-            std::thread::sleep(Duration::from_secs(2));
+        }
+    }
+
+    /// Reseteli az állapotot: pl. a land_played_this_turn flag-et false-ra állítja, valamint kikapcsolja
+    /// a battlefield creature-ök summoning_sickness tulajdonságát.
+    fn reset_state(&self, bot: &mut Bot) {
+        bot.land_played_this_turn = false;
+        for card in &mut bot.battlefield_creatures {
+            if let Creature(ref mut creature) = card.card_type {
+                creature.summoning_sickness = false;
+            }
         }
     }
 }

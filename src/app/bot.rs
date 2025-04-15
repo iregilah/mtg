@@ -11,7 +11,7 @@ use screenshot::get_screenshot;
 use crate::app::ui::{Cords, set_cursor_pos, left_click, press_key};
 use crate::app::cards_positions::get_card_positions;
 use crate::app::ocr::{preprocess_image, sanitize_ocr_text};
-
+use crate::app::card_library::{CardType, CREATURE_NAMES, LAND_NAMES};
 
 // <- Integráció: importáljuk a creature_positions modulból a két függvényt.
 use crate::app::creature_positions::{get_own_creature_positions, get_opponent_creature_positions};
@@ -66,6 +66,149 @@ impl Bot {
         }
     }
 
+    pub fn play_land(&mut self) {
+        if !self.land_played_this_turn {
+            if let Some((index, card_text)) = self.cards_texts.iter().enumerate()
+                .find(|(_i, text)| crate::app::card_library::LAND_NAMES.iter().any(|&land| text.contains(land)))
+            {
+                tracing::info!("Found land card '{}' at index {}. Playing it.", card_text, index);
+                Self::play_card(self, index);
+                self.land_number += 1;
+                self.land_played_this_turn = true;
+            }
+        }
+    }
+
+
+    pub fn cast_instants(&mut self) -> u32 {
+        let mut mana_available = self.land_number;
+        let card_library = crate::app::card_library::build_card_library();
+        let instant_names: Vec<String> = self.cards_texts.iter()
+            .filter(|text| text.contains("Burst Lightning") || text.contains("Lightning Strike"))
+            .cloned()
+            .collect();
+
+        for instant_name in instant_names {
+            if let Some(pos) = self.cards_texts.iter().position(|text| text.contains(&instant_name)) {
+                if let Some(card) = card_library.values().find(|c| Bot::text_contains(&c.name, &self.cards_texts[pos])) {
+                    if let crate::app::card_library::CardType::Instant(_) = card.card_type {
+                        let cost = card.mana_cost.clone();
+                        let colored_cost = cost.colored();
+                        let total_cost = cost.total();
+                        if mana_available >= colored_cost {
+                            let leftover = mana_available - colored_cost;
+                            if leftover >= cost.colorless {
+                                tracing::info!(
+                                    "Casting instant '{}' ({} colorless, {} colored), total cost = {}",
+                                    card.name, cost.colorless, colored_cost, total_cost
+                                );
+                                Bot::play_card(self, pos);
+                                mana_available -= total_cost;
+                                // Frissítjük a battlefield creature–ök állapotát:
+                                Bot::update_battlefield_creatures_from_ocr(self);
+                            } else {
+                                tracing::info!(
+                                    "Not enough leftover for colorless mana after paying colored cost for '{}'.",
+                                    card.name
+                                );
+                            }
+                        } else {
+                            tracing::info!(
+                                "Not enough colored mana to cast instant '{}'. Required: {} colored, available: {}",
+                                card.name, colored_cost, mana_available
+                            );
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!("Instant '{}' not found in hand.", instant_name);
+            }
+        }
+        mana_available
+    }
+
+
+    pub fn cast_creatures(&mut self) -> u32 {
+        let mut mana_available = self.land_number;
+        let card_library = crate::app::card_library::build_card_library();
+        let creature_names: Vec<String> = self.cards_texts.iter()
+            .filter(|text| crate::app::card_library::CREATURE_NAMES.iter().any(|&name| text.contains(name)))
+            .cloned()
+            .collect();
+
+        for creature_name in creature_names {
+            if let Some(pos) = self.cards_texts.iter().position(|text| text.contains(&creature_name)) {
+                if let Some(card) = card_library.values().find(|c| Bot::text_contains(&c.name, &self.cards_texts[pos])) {
+                    if let crate::app::card_library::CardType::Creature(ref creature) = card.card_type {
+                        let cost = card.mana_cost.clone();
+                        let colored_cost = cost.colored();
+                        let total_cost = cost.total();
+                        if mana_available >= colored_cost {
+                            let leftover = mana_available - colored_cost;
+                            if leftover >= cost.colorless {
+                                tracing::info!(
+                                    "Casting creature '{}' ({} colorless, {} colored), total cost = {}",
+                                    creature.name, cost.colorless, colored_cost, total_cost
+                                );
+                                Bot::play_card(self, pos);
+                                self.battlefield_creatures.push(card.clone());
+                                mana_available -= total_cost;
+                            } else {
+                                tracing::info!(
+                                    "Not enough leftover for colorless mana after paying colored mana for '{}'. Required: {} colorless, leftover: {}",
+                                    creature.name, cost.colorless, leftover
+                                );
+                            }
+                        } else {
+                            tracing::info!(
+                                "Not enough colored mana to cast '{}'. Required: {} colored, available: {}",
+                                creature.name, colored_cost, mana_available
+                            );
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!("Creature '{}' not found in hand for removal.", creature_name);
+            }
+        }
+        mana_available
+    }
+
+
+    pub fn play_card(bot: &mut Bot, card_index: usize) {
+        let positions = crate::app::cards_positions::get_card_positions(bot.card_count, bot.screen_width as u32);
+        if card_index >= positions.len() {
+            tracing::error!("Error: Card index {} is out of range. Only {} cards available.", card_index, positions.len());
+            return;
+        }
+        let pos = positions[card_index];
+        let card_y = ((bot.screen_height as f64) * 0.97).ceil() as i32;
+        set_cursor_pos(pos.hover_x as i32, card_y);
+        left_click();
+        left_click();
+        set_cursor_pos(bot.screen_width - 1, bot.screen_height - 1);
+        press_key(0x5A); // 'Z' billentyű
+        left_click();
+        sleep(Duration::from_millis(150));
+        Bot::remove_card_from_hand(bot, card_index);
+    }
+
+
+    pub fn remove_card_from_hand(bot: &mut Bot, card_index: usize) {
+        if card_index < bot.cards_texts.len() {
+            let removed = bot.cards_texts.remove(card_index);
+            tracing::info!("Removed card '{}' from hand at index {}.", removed, card_index);
+            tracing::info!("Updated hand: {:?}", bot.cards_texts);
+            bot.card_count = bot.cards_texts.len();
+        } else {
+            tracing::warn!("Attempted to remove card at invalid index {}.", card_index);
+        }
+    }
+
+
+    pub fn text_contains(name: &str, ocr_text: &str) -> bool {
+        ocr_text.contains(name)
+    }
 
     // 1. Pixelátlagoló segédfüggvények
     fn get_average_color(x: i32, y: i32, width: i32, height: i32) -> (u8, u8, u8) {

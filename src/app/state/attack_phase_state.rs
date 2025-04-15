@@ -33,13 +33,8 @@ impl State for AttackPhaseState {
     }
 
     fn next(&mut self) -> Box<dyn State> {
-        if self.no_attack {
-            tracing::info!("AttackPhaseState: transitioning to OpponentsTurnState due to no creature available.");
-            Box::new(OpponentsTurnState::new())
-        } else {
-            tracing::info!("AttackPhaseState: transitioning to SecondMainPhaseState.");
-            Box::new(SecondMainPhaseState::new())
-        }
+        tracing::info!("AttackPhaseState: transitioning to SecondMainPhaseState.");
+        Box::new(SecondMainPhaseState::new())
     }
 }
 
