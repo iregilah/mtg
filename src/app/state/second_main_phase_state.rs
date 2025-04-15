@@ -22,7 +22,7 @@ impl State for SecondMainPhaseState {
         }
 
         // 2. Creature castolási akciók végrehajtása
-        self.process_casting(bot);
+        bot.cast_creatures();
 
         // 3. Új ellenőrzés: ha most már "Opponent's Turn" szerepel a szövegben, kilépünk
         if !self.post_cast_check(bot) {
@@ -66,21 +66,6 @@ impl SecondMainPhaseState {
         true
     }
 
-    /// Ha van elegendő mana és a kézben creature kártya van, akkor meghívja a Bot belső cast_creature metódusát,
-    /// majd frissíti a battlefield állapotot.
-    fn process_casting(&self, bot: &mut Bot) {
-        if bot.land_number > 0 {
-            let creature_in_hand = bot.cards_texts.iter().any(|text| {
-                CREATURE_NAMES.iter().any(|&name| text.contains(name))
-            });
-            if creature_in_hand {
-                tracing::info!("Sufficient mana and creature card detected. Casting a creature.");
-                // A Bot központi metódusa felel a creature castolásáért.
-                bot.cast_creatures();
-                Bot::update_battlefield_creatures_from_ocr(bot);
-            }
-        }
-    }
 
     /// Újra ellenőrzi a normál módú main region szöveget, és ha "Opponent's Turn" szerepel,
     /// visszaadja false értékkel.
