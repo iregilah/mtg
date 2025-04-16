@@ -7,6 +7,7 @@ use crate::app::ui::press_key;
 use crate::app::state::start_state::StartState;
 use crate::app::card_library::{CardType, CREATURE_NAMES, LAND_NAMES};
 use crate::app::card_library::CardType::Creature;
+use crate::app::state::opponents_turn_state::OpponentsTurnState;
 
 
 pub struct SecondMainPhaseState {}
@@ -39,7 +40,7 @@ impl State for SecondMainPhaseState {
 
     fn next(&mut self) -> Box<dyn State> {
         tracing::info!("SecondMainPhaseState: transitioning to new round (StartState).");
-        Box::new(StartState::new())
+        Box::new(OpponentsTurnState::new())
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::app::ui::press_key;
 use crate::app::bot::Bot;
 use crate::app::state::State;
 use std::thread::sleep;
@@ -31,13 +32,32 @@ impl State for OpponentsTurnState {
 
 impl OpponentsTurnState {
     fn process_opponents_turn(&self, bot: &mut Bot) {
-        let mut is_red = check_button_color(&bot.cords) == "red";
         loop {
-            is_red = check_button_color(&bot.cords) == "red";
-            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, is_red);
-            tracing::info!("(Opponent turn) Main region text: {}", main_text);
-            if main_text.contains("Next") {
-                tracing::info!("Opponent turn phase finished.");
+            // Első olvasás: red mode
+            let main_text_red = check_main_region_text(
+                bot.screen_width as u32,
+                bot.screen_height as u32,
+                true
+            );
+            tracing::info!("(Opponent turn - red) Main region text: {}", main_text_red);
+            if main_text_red.contains("My Turn") {
+                tracing::info!("Detected 'My Turn' in red mode. Pressing space.");
+                press_key(winapi::um::winuser::VK_SPACE as u16);
+            }
+
+            // Második olvasás: nem red mode
+            let main_text_non_red = check_main_region_text(
+                bot.screen_width as u32,
+                bot.screen_height as u32,
+                false
+            );
+            tracing::info!("(Opponent turn - non-red) Main region text: {}", main_text_non_red);
+            if main_text_non_red.contains("Pass") {
+                tracing::info!("Detected 'Pass' in non-red mode. Pressing space.");
+                press_key(winapi::um::winuser::VK_SPACE as u16);
+            }
+            if main_text_non_red.contains("Next") {
+                tracing::info!("Detected 'Next' in non-red mode. Opponent turn phase finished.");
                 break;
             }
             sleep(Duration::from_secs(2));

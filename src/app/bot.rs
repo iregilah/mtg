@@ -118,24 +118,24 @@ impl Bot {
         let mut mana_available = self.land_number;
         let card_library = crate::app::card_library::build_card_library();
 
-        // Gyűjtsük össze azokat az indexeket, ahol a kézben lévő kártya megfelel a predikátumnak.
-        let candidate_positions: Vec<usize> = self.cards_texts.iter().enumerate().filter_map(|(i, text)| {
-            card_library.values().find(|card| Bot::text_contains(&card.name, text))
-                .filter(|card| predicate(&card.card_type))
-                .map(|_| i)
-        }).collect();
-
-        for pos in candidate_positions {
-            if let Some(card) = card_library.values().find(|card| Bot::text_contains(&card.name, &self.cards_texts[pos])) {
-                if predicate(&card.card_type) {
-                    if let Some(cost_used) = self.try_cast_card(pos, card) {
-                        mana_available = mana_available.saturating_sub(cost_used);
-                        // Ha creature típusú kártya, hozzáadjuk a battlefield-hez
-                        if let CardType::Creature(_) = card.card_type {
-                            self.battlefield_creatures.push(card.clone());
+        // Iterálunk visszafelé az aktuális self.cards_texts tömbön.
+        let mut i = self.cards_texts.len();
+        while i > 0 {
+            i -= 1; // for ciklusban visszafelé: i = len - 1, len - 2, ... , 0
+            // Biztosan lekérjük a kártya szöveget a kézből
+            if let Some(text) = self.cards_texts.get(i) {
+                // Megkeressük a card_library-ben azt a kártyát, amelynek neve megtalálható a text-ben
+                if let Some(card) = card_library.values().find(|card| Bot::text_contains(&card.name, text)) {
+                    // Csak azokat a kártyákat próbáljuk meg kijátszani, amelyek megfelelnek a predicate-nek
+                    if predicate(&card.card_type) {
+                        if let Some(cost_used) = self.try_cast_card(i, card) {
+                            mana_available = mana_available.saturating_sub(cost_used);
+                            // Ha creature típusú, frissítjük a battlefield creature-k tömbjét
+                            if let CardType::Creature(_) = card.card_type {
+                                self.battlefield_creatures.push(card.clone());
+                            }
+                            Bot::update_battlefield_creatures_from_ocr(self);
                         }
-                        // Frissítjük a battlefield állapotot az OCR alapján
-                        Bot::update_battlefield_creatures_from_ocr(self);
                     }
                 }
             }
@@ -211,11 +211,14 @@ impl Bot {
 
 
     pub fn text_contains(name: &str, ocr_text: &str) -> bool {
-        ocr_text.contains(name)
+        tracing::info!("text_contains() called with name = {:?} and ocr_text = {:?}", name, ocr_text);
+        let result = ocr_text.contains(name);
+        tracing::info!("text_contains() returning: {}", result);
+        result
     }
-
     // 1. Pixelátlagoló segédfüggvények
     fn get_average_color(x: i32, y: i32, width: i32, height: i32) -> (u8, u8, u8) {
+        tracing::info!("get_average_color() called with x = {}, y = {}, width = {}, height = {}", x, y, width, height);
         let mut r_total: u32 = 0;
         let mut g_total: u32 = 0;
         let mut b_total: u32 = 0;
@@ -223,6 +226,8 @@ impl Bot {
         for i in 0..width {
             for j in 0..height {
                 let col = win32_get_color(x + i, y + j);
+                // Debug log minden egyes pixelért (ez info vagy debug szintű lehet, ha túl sok)
+                tracing::debug!("Pixel at ({}, {}) has color: {:?}", x + i, y + j, col);
                 r_total += col.r as u32;
                 g_total += col.g as u32;
                 b_total += col.b as u32;
@@ -230,27 +235,39 @@ impl Bot {
             }
         }
         if count == 0 {
+            tracing::error!("get_average_color(): count = 0, returning (0, 0, 0)");
             return (0, 0, 0);
         }
-        (
-            (r_total / count) as u8,
-            (g_total / count) as u8,
-            (b_total / count) as u8,
-        )
+        let avg_r = (r_total / count) as u8;
+        let avg_g = (g_total / count) as u8;
+        let avg_b = (b_total / count) as u8;
+        tracing::info!("get_average_color() returning average color: ({}, {}, {})", avg_r, avg_g, avg_b);
+        (avg_r, avg_g, avg_b)
     }
 
     fn is_color_within_tolerance(color: (u8, u8, u8), target: (u8, u8, u8), tol: i32) -> bool {
         let (r, g, b) = color;
         let (tr, tg, tb) = target;
-        (r as i32 - tr as i32).abs() <= tol &&
-            (g as i32 - tg as i32).abs() <= tol &&
-            (b as i32 - tb as i32).abs() <= tol
+        let r_diff = (r as i32 - tr as i32).abs();
+        let g_diff = (g as i32 - tg as i32).abs();
+        let b_diff = (b as i32 - tb as i32).abs();
+        let result = r_diff <= tol && g_diff <= tol && b_diff <= tol;
+        tracing::info!(
+        "is_color_within_tolerance() called with color = {:?}, target = {:?}, tol = {}. Diff: (r: {}, g: {}, b: {}), result: {}",
+        color, target, tol, r_diff, g_diff, b_diff, result
+    );
+        result
     }
 
     // 2. Creature-számolási logika egy oldalon (saját vagy ellenfél)
     fn detect_creature_count_for_side(screen_width: u32, screen_height: u32, is_opponent: bool) -> usize {
+        tracing::info!(
+        "detect_creature_count_for_side() called with screen_width = {}, screen_height = {}, is_opponent = {}",
+        screen_width, screen_height, is_opponent
+    );
         let screen_width_f = screen_width as f64;
         let screen_height_f = screen_height as f64;
+
         // Választott y sáv az adott oldalhoz
         let (y1_norm, y2_norm) = if is_opponent {
             (101.761, 104.891)
@@ -260,51 +277,71 @@ impl Bot {
         let y1 = ((y1_norm / 381.287) * screen_height_f).ceil() as i32;
         let y2 = ((y2_norm / 381.287) * screen_height_f).ceil() as i32;
         let region_height = y2 - y1;
-        // A vizsgálandó téglalap szélessége: (4.4 / 677.292) * screen_width
         let rect_width = ((4.4 / 677.292) * screen_width_f).ceil() as i32;
         let screen_center_x = (screen_width as i32) / 2;
         let center_rect_x = screen_center_x - rect_width / 2;
+        tracing::info!(
+        "Calculated values: y1 = {}, y2 = {}, region_height = {}, rect_width = {}, screen_center_x = {}, center_rect_x = {}",
+        y1, y2, region_height, rect_width, screen_center_x, center_rect_x
+    );
 
         let target_color = (210, 175, 157);
         let tol = 10;
 
-        // Először vizsgáljuk a képernyő közepén levő téglalapot
+        // Középső pixel vizsgálat
         let center_color = Self::get_average_color(center_rect_x, y1, rect_width, region_height);
+        tracing::info!("Center area average color: {:?}", center_color);
         let center_is_card = Self::is_color_within_tolerance(center_color, target_color, tol);
+        tracing::info!("Center area considered as card: {}", center_is_card);
 
         if center_is_card {
-            // Páratlan eset: indulás 1 creature-vel, majd lépésenként +2 addig, amíg maximum 7 creature van
+            // Páratlan ág: indulás 1 creature-vel, majd lépésenként +2
             let mut count = 1;
             let step = ((69.0 / 677.292) * screen_width_f).ceil() as i32;
             let mut current_center_x = screen_center_x - step;
-            while count < 7 && current_center_x - rect_width / 2 >= 0 {
+            tracing::info!("Starting odd branch: initial count = {}, step = {}", count, step);
+            while count < 7 && (current_center_x - rect_width / 2 >= 0) {
                 let sample_x = current_center_x - rect_width / 2;
                 let sample_color = Self::get_average_color(sample_x, y1, rect_width, region_height);
+                tracing::info!(
+                "Odd branch: current_center_x = {}, sample_x = {}, sample_color = {:?}",
+                current_center_x, sample_x, sample_color
+            );
                 if Self::is_color_within_tolerance(sample_color, target_color, tol) {
                     count += 2;
+                    tracing::info!("Odd branch: increasing count, new count = {}", count);
                     current_center_x -= step;
                 } else {
+                    tracing::info!("Odd branch: sample color not within tolerance, breaking loop");
                     break;
                 }
             }
+            tracing::info!("Odd branch final creature count = {}", count);
             count
         } else {
-            // Páros eset: indulás 0 creature-vel, kezdő pozíció: (34.492/677.292)*screen_width,
-            // majd lépésenként +2, maximum 8 creature
+            // Páros ág: indulás 0 creature-vel, majd lépésenként +2
             let mut count = 0;
             let start_x = ((34.492 / 677.292) * screen_width_f).ceil() as i32;
             let step = ((69.0 / 677.292) * screen_width_f).ceil() as i32;
             let mut current_x = start_x;
-            while count < 8 && current_x - rect_width / 2 >= 0 {
+            tracing::info!("Starting even branch: initial count = {}, start_x = {}, step = {}", count, start_x, step);
+            while count < 8 && (current_x - rect_width / 2 >= 0) {
                 let sample_x = current_x - rect_width / 2;
                 let sample_color = Self::get_average_color(sample_x, y1, rect_width, region_height);
+                tracing::info!(
+                "Even branch: current_x = {}, sample_x = {}, sample_color = {:?}",
+                current_x, sample_x, sample_color
+            );
                 if Self::is_color_within_tolerance(sample_color, target_color, tol) {
                     count += 2;
+                    tracing::info!("Even branch: increasing count, new count = {}", count);
                     current_x -= step;
                 } else {
+                    tracing::info!("Even branch: sample color not within tolerance, breaking loop");
                     break;
                 }
             }
+            tracing::info!("Even branch final creature count = {}", count);
             count
         }
     }

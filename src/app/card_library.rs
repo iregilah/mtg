@@ -43,6 +43,7 @@ pub enum CardType {
     Creature(Creature),
     Instant(Instant_),
     Enchantment(Enchantment),
+    Land,
 }
 
 /// Általános trigger típus, amely később kibővíthető
@@ -356,14 +357,7 @@ pub fn build_card_library() -> HashMap<String, Card> {
         "Mountain".to_string(),
         Card {
             name: "Mountain".to_string(),
-            // Ha van külön Land típusod, érdemes azt használni; itt egyszerűség végett a Creature struktúrát használjuk,
-            // de logikailag ez egy Land.
-            card_type: CardType::Creature(Creature {
-                name: "Mountain".to_string(),
-                summoning_sickness: false,
-                power: 0,
-                toughness: 0,
-            }),
+            card_type: CardType::Land,  // Most már Land típus
             mana_cost: ManaCost { colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0 },
             attributes: vec![],
             triggers: vec![Trigger::Custom("AddRedMana".to_string())],
@@ -375,18 +369,13 @@ pub fn build_card_library() -> HashMap<String, Card> {
         "Rockface Village".to_string(),
         Card {
             name: "Rockface Village".to_string(),
-            card_type: CardType::Creature(Creature {
-                name: "Rockface Village".to_string(),
-                summoning_sickness: false,
-                power: 0,
-                toughness: 0,
-            }),
+            card_type: CardType::Land,  // Mostantól Land típus
             mana_cost: ManaCost { colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0 },
             attributes: vec![],
             triggers: vec![
                 Trigger::Custom("AddColorlessMana".to_string()),
                 Trigger::Custom("AddRedMana".to_string()),
-                Trigger::OnTargeted, // A targetálásnál például extra hatás
+                Trigger::OnTargeted,
             ],
         },
     );
