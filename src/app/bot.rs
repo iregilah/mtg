@@ -92,6 +92,8 @@ impl Bot {
                     card.name, colored_cost, cost.colorless, total_cost
                 );
                 Self::play_card(self, pos);
+                sleep(Duration::from_secs(15));
+                tracing::info!("!!!!!!waited 15 sec");
                 return Some(total_cost);
             } else {
                 tracing::info!(
@@ -186,7 +188,7 @@ impl Bot {
             return;
         }
         let pos = positions[card_index];
-        let card_y = ((bot.screen_height as f64) * 0.97).ceil() as i32;
+        let card_y = ((bot.screen_height as f64) * 0.97).floor() as i32;
         set_cursor_pos(pos.hover_x as i32, card_y);
         left_click();
         left_click();
@@ -211,9 +213,9 @@ impl Bot {
 
 
     pub fn text_contains(name: &str, ocr_text: &str) -> bool {
-        tracing::info!("text_contains() called with name = {:?} and ocr_text = {:?}", name, ocr_text);
+        //tracing::info!("text_contains() called with name = {:?} and ocr_text = {:?}", name, ocr_text);
         let result = ocr_text.contains(name);
-        tracing::info!("text_contains() returning: {}", result);
+       // tracing::info!("text_contains() returning: {}", result);
         result
     }
     // 1. Pixelátlagoló segédfüggvények
@@ -245,20 +247,39 @@ impl Bot {
         (avg_r, avg_g, avg_b)
     }
 
-    fn is_color_within_tolerance(color: (u8, u8, u8), target: (u8, u8, u8), tol: i32) -> bool {
-        let (r, g, b) = color;
-        let (tr, tg, tb) = target;
-        let r_diff = (r as i32 - tr as i32).abs();
-        let g_diff = (g as i32 - tg as i32).abs();
-        let b_diff = (b as i32 - tb as i32).abs();
-        let result = r_diff <= tol && g_diff <= tol && b_diff <= tol;
+    fn is_color_within_tolerance(color: (u8, u8, u8), target: (u8, u8, u8), tol: f64) -> bool {
+        // Konvertáljuk a bemeneti értékeket f64-esre
+        let (r, g, b) = (color.0 as f64, color.1 as f64, color.2 as f64);
+        let (tr, tg, tb) = (target.0 as f64, target.1 as f64, target.2 as f64);
+
+        // Számoljuk ki a három arányt, elkerülve a zéróval való osztást
+        let ratio_rg = if g != 0.0 { r / g } else { 0.0 };
+        let ratio_gb = if b != 0.0 { g / b } else { 0.0 };
+        let ratio_rb = if b != 0.0 { r / b } else { 0.0 };
+
+        let target_ratio_rg = if tg != 0.0 { tr / tg } else { 0.0 };
+        let target_ratio_gb = if tb != 0.0 { tg / tb } else { 0.0 };
+        let target_ratio_rb = if tb != 0.0 { tr / tb } else { 0.0 };
+
+        // Számoljuk ki az arányok közötti abszolút különbségeket
+        let diff_rg = (ratio_rg - target_ratio_rg).abs();
+        let diff_gb = (ratio_gb - target_ratio_gb).abs();
+        let diff_rb = (ratio_rb - target_ratio_rb).abs();
+
+        let result = diff_rg <= tol && diff_gb <= tol && diff_rb <= tol;
+
         tracing::info!(
-        "is_color_within_tolerance() called with color = {:?}, target = {:?}, tol = {}. Diff: (r: {}, g: {}, b: {}), result: {}",
-        color, target, tol, r_diff, g_diff, b_diff, result
+        "is_color_within_tolerance() called with color = {:?}, target = {:?}, tol = {}. \
+         Computed ratios: (R/G: {:.3}, G/B: {:.3}, R/B: {:.3}), Target ratios: (R/G: {:.3}, G/B: {:.3}, R/B: {:.3}), \
+         Differences: (R/G: {:.3}, G/B: {:.3}, R/B: {:.3}), result: {}",
+        color, target, tol,
+        ratio_rg, ratio_gb, ratio_rb,
+        target_ratio_rg, target_ratio_gb, target_ratio_rb,
+        diff_rg, diff_gb, diff_rb,
+        result
     );
         result
     }
-
     // 2. Creature-számolási logika egy oldalon (saját vagy ellenfél)
     fn detect_creature_count_for_side(screen_width: u32, screen_height: u32, is_opponent: bool) -> usize {
         tracing::info!(
@@ -274,10 +295,10 @@ impl Bot {
         } else {
             (185.141, 188.731)
         };
-        let y1 = ((y1_norm / 381.287) * screen_height_f).ceil() as i32;
-        let y2 = ((y2_norm / 381.287) * screen_height_f).ceil() as i32;
+        let y1 = ((y1_norm / 381.287) * screen_height_f).floor() as i32;
+        let y2 = ((y2_norm / 381.287) * screen_height_f).floor() as i32;
         let region_height = y2 - y1;
-        let rect_width = ((4.4 / 677.292) * screen_width_f).ceil() as i32;
+        let rect_width = ((4.4 / 677.292) * screen_width_f).floor() as i32;
         let screen_center_x = (screen_width as i32) / 2;
         let center_rect_x = screen_center_x - rect_width / 2;
         tracing::info!(
@@ -286,7 +307,7 @@ impl Bot {
     );
 
         let target_color = (210, 175, 157);
-        let tol = 10;
+        let tol = 0.05;
 
         // Középső pixel vizsgálat
         let center_color = Self::get_average_color(center_rect_x, y1, rect_width, region_height);
@@ -297,7 +318,7 @@ impl Bot {
         if center_is_card {
             // Páratlan ág: indulás 1 creature-vel, majd lépésenként +2
             let mut count = 1;
-            let step = ((69.0 / 677.292) * screen_width_f).ceil() as i32;
+            let step = ((69.0 / 677.292) * screen_width_f).floor() as i32;
             let mut current_center_x = screen_center_x - step;
             tracing::info!("Starting odd branch: initial count = {}, step = {}", count, step);
             while count < 7 && (current_center_x - rect_width / 2 >= 0) {
@@ -321,8 +342,8 @@ impl Bot {
         } else {
             // Páros ág: indulás 0 creature-vel, majd lépésenként +2
             let mut count = 0;
-            let start_x = ((34.492 / 677.292) * screen_width_f).ceil() as i32;
-            let step = ((69.0 / 677.292) * screen_width_f).ceil() as i32;
+            let start_x = ((34.492 / 677.292) * screen_width_f).floor() as i32;
+            let step = ((69.0 / 677.292) * screen_width_f).floor() as i32;
             let mut current_x = start_x;
             tracing::info!("Starting even branch: initial count = {}, start_x = {}, step = {}", count, start_x, step);
             while count < 8 && (current_x - rect_width / 2 >= 0) {
@@ -415,7 +436,7 @@ impl Bot {
         }
         let pos = positions[index];
         // A képernyő alsó 97%-a
-        let card_y = ((self.screen_height as f64) * 0.97).ceil() as i32;
+        let card_y = ((self.screen_height as f64) * 0.97).floor() as i32;
         set_cursor_pos(pos.hover_x as i32, card_y);
         tracing::info!("Hovering over card {} at ({}, {})", index, pos.hover_x, card_y);
         sleep(Duration::from_secs(2));
@@ -445,8 +466,8 @@ impl Bot {
             tracing::error!("Invalid OCR horizontal region for card {}", index);
             return String::new();
         }
-        let ocr_y1 = ((232.606 / 381.287) * (self.screen_height as f64)).ceil() as u32;
-        let ocr_y2 = ((240.832 / 381.287) * (self.screen_height as f64)).ceil() as u32;
+        let ocr_y1 = ((232.606 / 381.287) * (self.screen_height as f64)).floor() as u32;
+        let ocr_y2 = ((240.832 / 381.287) * (self.screen_height as f64)).floor() as u32;
         if ocr_y2 <= ocr_y1 {
             tracing::error!("Invalid OCR vertical region.");
             return String::new();

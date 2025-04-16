@@ -75,10 +75,10 @@ pub fn white_invert_image(cropped: &DynamicImage) -> DynamicImage {
 
 /// A "start_order" felirat OCR-je – itt a white_invert pipeline-t használjuk.
 pub fn check_start_order_text(screen_width: u32, screen_height: u32) -> String {
-    let x1 = (238.294 / 677.292 * screen_width as f64).ceil() as u32;
-    let x2 = (437.764 / 677.292 * screen_width as f64).ceil() as u32;
-    let y1 = (21.432 / 381.287 * screen_height as f64).ceil() as u32;
-    let y2 = (43.454 / 381.287 * screen_height as f64).ceil() as u32;
+    let x1 = (238.294 / 677.292 * screen_width as f64).floor() as u32;
+    let x2 = (437.764 / 677.292 * screen_width as f64).floor() as u32;
+    let y1 = (21.432 / 381.287 * screen_height as f64).floor() as u32;
+    let y2 = (43.454 / 381.287 * screen_height as f64).floor() as u32;
     let crop_width = x2.saturating_sub(x1);
     let crop_height = y2.saturating_sub(y1);
 
@@ -127,10 +127,10 @@ pub fn check_start_order_text(screen_width: u32, screen_height: u32) -> String {
 
 /// Az egyetlen közös függvény a main region szövegére.
 pub fn check_main_region_text(screen_width: u32, screen_height: u32, is_red_button: bool) -> String {
-    let x1 = (589.799 / 677.292 * screen_width as f64).ceil() as u32;
-    let x2 = (665.0 / 677.292 * screen_width as f64).ceil() as u32;
-    let y1 = (328.906 / 381.287 * screen_height as f64).ceil() as u32;
-    let y2 = (341.871 / 381.287 * screen_height as f64).ceil() as u32;
+    let x1 = (589.799 / 677.292 * screen_width as f64).floor() as u32;
+    let x2 = (665.0 / 677.292 * screen_width as f64).floor() as u32;
+    let y1 = (328.906 / 381.287 * screen_height as f64).floor() as u32;
+    let y2 = (341.871 / 381.287 * screen_height as f64).floor() as u32;
     let crop_width = x2.saturating_sub(x1);
     let crop_height = y2.saturating_sub(y1);
 
