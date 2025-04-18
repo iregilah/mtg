@@ -115,7 +115,7 @@ impl SecondMainPhaseState {
     /// a battlefield creature-ök summoning_sickness tulajdonságát.
     fn reset_state(&self, bot: &mut Bot) {
         bot.land_played_this_turn = false;
-        for card in &mut bot.battlefield_creatures {
+        for card in bot.battlefield_creatures.values_mut() {
             if let Creature(ref mut creature) = card.card_type {
                 creature.summoning_sickness = false;
             }

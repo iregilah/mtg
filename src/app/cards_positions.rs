@@ -1,5 +1,3 @@
-// card_library.rs
-// Ez a modul tartalmazza a kártya pozíciókat leíró struktúrát és a képernyő szélessége alapján számoló függvényt.
 
 /// --- Kártya pozíciók ---
 /// - `hover_x`: azt a vízszintes koordinátát adja meg, ahová az egérmutatót kell mozgatni a tooltip megjelenítéséhez.

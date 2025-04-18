@@ -206,8 +206,8 @@ pub fn check_main_region_text(screen_width: u32, screen_height: u32, is_red_butt
 /// 5. Elment egy ideiglenes képfájlt (például "temp_creature.png").
 /// 6. Tesseract-ot hívja meg a temp_creature.png állomány feldolgozására, majd az eredményt a sanitize_ocr_text segítségével tisztítja meg.
 /// 7. Visszaadja az így kapott, OCR által kiolvasott szöveget.
-pub fn read_creature_text(pos: CreaturePosition, _screen_width: u32, _screen_height: u32) -> String {
-    // 1. Képernyőkép lekérése
+pub fn read_creature_text(pos: CreaturePosition, index: usize, is_opponent: bool, _screen_width: u32, _screen_height: u32) -> String {
+    // 1. Capture full‐screen
     let screenshot = match get_screenshot(0) {
         Ok(scn) => scn,
         Err(e) => {
@@ -217,7 +217,7 @@ pub fn read_creature_text(pos: CreaturePosition, _screen_width: u32, _screen_hei
     };
     tracing::info!("Screenshot mérete: {}x{}", screenshot.width(), screenshot.height());
 
-    // 2. Ellenőrizzük az OCR koordinátákat
+    // 2. Bounds check
     if pos.ocr_x2 > screenshot.width() as u32 || pos.ocr_y2 > screenshot.height() as u32 {
         tracing::error!(
             "OCR koordináták kívül esnek a képen: pos=({}, {}, {}, {}), screenshot = {}x{}",
@@ -226,18 +226,14 @@ pub fn read_creature_text(pos: CreaturePosition, _screen_width: u32, _screen_hei
         );
         return String::new();
     }
-    tracing::info!("OCR koordináták rendben: ({}, {})-({}, {})", pos.ocr_x1, pos.ocr_y1, pos.ocr_x2, pos.ocr_y2);
 
-    // 3. Kép létrehozása a nyers adatokból
-    let data_vec = unsafe {
-        slice::from_raw_parts(screenshot.raw_data(), screenshot.raw_len()).to_vec()
-    };
-    let image_buf_opt = ImageBuffer::<Rgba<u8>, _>::from_raw(
+    // 3. Build image buffer
+    let raw = unsafe { slice::from_raw_parts(screenshot.raw_data(), screenshot.raw_len()).to_vec() };
+    let image_buf = match ImageBuffer::<Rgba<u8>, _>::from_raw(
         screenshot.width() as u32,
         screenshot.height() as u32,
-        data_vec,
-    );
-    let image_buf = match image_buf_opt {
+        raw,
+    ) {
         Some(buf) => buf,
         None => {
             tracing::error!("Hiba az image buffer létrehozásánál");
@@ -246,68 +242,48 @@ pub fn read_creature_text(pos: CreaturePosition, _screen_width: u32, _screen_hei
     };
     let dyn_img = DynamicImage::ImageRgba8(image_buf);
 
-    // 4. Kivágási adatok
-    let crop_width = pos.ocr_x2.saturating_sub(pos.ocr_x1);
-    let crop_height = pos.ocr_y2.saturating_sub(pos.ocr_y1);
-    tracing::info!("Kivágás: x1={}, y1={}, width={}, height={}", pos.ocr_x1, pos.ocr_y1, crop_width, crop_height);
-    if crop_width == 0 || crop_height == 0 {
-        tracing::error!("Érvénytelen kivágási méret: {}x{}", crop_width, crop_height);
+    // 4. Crop to OCR region
+    let w = pos.ocr_x2.saturating_sub(pos.ocr_x1);
+    let h = pos.ocr_y2.saturating_sub(pos.ocr_y1);
+    tracing::info!("Kivágás: x1={}, y1={}, width={}, height={}", pos.ocr_x1, pos.ocr_y1, w, h);
+    if w == 0 || h == 0 {
+        tracing::error!("Érvénytelen kivágási méret: {}x{}", w, h);
         return String::new();
     }
+    let cropped = crop_imm(&dyn_img, pos.ocr_x1, pos.ocr_y1, w, h).to_image();
 
-    // 5. Kép kivágása
-    let cropped_img = crop_imm(&dyn_img, pos.ocr_x1, pos.ocr_y1, crop_width, crop_height).to_image();
+    // 5. Preprocess pipeline
+    let processed = preprocess_image(&DynamicImage::ImageRgba8(cropped));
 
-    // Mentés: debug kép a kivágásról
-    let unique = SystemTime::now().duration_since(UNIX_EPOCH)
-        .unwrap_or_default().as_millis();
-    let debug_crop_filename = format!("debug_crop_creature_{}_{}_{}x{}_{}.png",
-                                      pos.ocr_x1, pos.ocr_y1, crop_width, crop_height, unique);
-    if let Err(e) = cropped_img.save(&debug_crop_filename) {
-        tracing::error!("Hiba a kivágott kép mentésekor: {:?}", e);
-    } else {
-        tracing::info!("Kivágott kép mentve: {}", debug_crop_filename);
-    }
-
-    // 6. Előfeldolgozás – csak a normál preprocess_image használata (nincs white inversion)
-    let processed = preprocess_image(&DynamicImage::ImageRgba8(cropped_img));
-    let debug_processed_filename = format!("debug_processed_creature_{}_{}_{}.png", pos.ocr_x1, pos.ocr_y1, unique);
-    if let Err(e) = processed.save(&debug_processed_filename) {
-        tracing::error!("Hiba a feldolgozott kép mentésekor: {:?}", e);
-    } else {
-        tracing::info!("Feldolgozott kép mentve: {}", debug_processed_filename);
-    }
-
-    // 7. Ideiglenes fájl létrehozása az OCR számára – most már egyedi névvel
-    let temp_filename = format!("temp_creature_{}_{}_{}.png", pos.ocr_x1, pos.ocr_y1, unique);
+    // 6. Save a single stable temp file for Tesseract
+    let parity = if index % 2 == 1 { "odd" } else { "even" };
+    let side   = if is_opponent      { "opponents_creature" } else { "creature" };
+    let temp_filename = format!("temp_{}_{}_{}.png", parity, side, index);
     if let Err(e) = processed.save(&temp_filename) {
         tracing::error!("Hiba a temp creature kép mentésekor: {:?}", e);
         return String::new();
-    } else {
-        tracing::info!("Temp creature kép mentve: {}", temp_filename);
     }
+    tracing::info!("Temp creature kép mentve: {}", temp_filename);
 
-    // 8. OCR hívás Tesseract-tal
+    // 7. OCR via Tesseract
     let output = Command::new(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
         .arg(&temp_filename)
         .arg("stdout")
-        .arg("-l")
-        .arg("eng")
-        .arg("--psm")
-        .arg("7")
+        .arg("-l").arg("eng")
+        .arg("--psm").arg("7")
         .output();
+
     match output {
-        Ok(output) if output.status.success() => {
-            let raw_text = String::from_utf8_lossy(&output.stdout);
-            tracing::info!("OCR kimenet a {} fájlból: {}", temp_filename, raw_text);
-            sanitize_ocr_text(raw_text.trim())
-        },
-        Ok(output) => {
+        Ok(o) if o.status.success() => {
+            let raw = String::from_utf8_lossy(&o.stdout);
+            sanitize_ocr_text(raw.trim())
+        }
+        Ok(o) => {
             tracing::error!("Tesseract hiba a {} fájlnál: {}",
-                temp_filename,
-                String::from_utf8_lossy(&output.stderr));
+                           temp_filename,
+                           String::from_utf8_lossy(&o.stderr));
             String::new()
-        },
+        }
         Err(e) => {
             tracing::error!("Tesseract futtatási hiba: {:?}", e);
             String::new()

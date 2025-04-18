@@ -9,12 +9,13 @@ use crate::app::state::opponents_turn_state::OpponentsTurnState;
 use crate::app::ui::{check_button_color, press_key};
 use crate::app::state::second_main_phase_state::SecondMainPhaseState;
 use crate::app::ui;
-//use regex::Regex;
+use regex::Regex;
 
 
 pub struct AttackPhaseState {
     no_attack: bool,
 }
+
 impl AttackPhaseState {
     pub fn new() -> Self {
         Self { no_attack: false }
@@ -40,16 +41,20 @@ impl State for AttackPhaseState {
 
 impl AttackPhaseState {
     fn is_attackers_text(s: &str) -> bool {
-        // Egyszerű ellenőrzés: ha legalább két szó van, az első egy szám és a második "Attackers"
-        let tokens: Vec<&str> = s.split_whitespace().collect();
-        if tokens.len() >= 2 && tokens[1] == "Attackers" {
-            return tokens[0].parse::<u32>().is_ok();
-        }
-        false
+        // A regex, ami egyezik a következővel:
+        // - opcionális szóközök elején,
+        // - majd egy vagy több számjegy (\d+),
+        // - utána legalább egy szóköz (\s+),
+        // - majd az "Attacker" szó, ahol az "s" opcionális ("Attackers?" az "s" kérdőjellel opcionális),
+        // - végül opcionális szóközök, és a szöveg vége.
+        let re = Regex::new(r"^\s*\d+\s+Attackers?\s*$").unwrap();
+        let result = re.is_match(s);
+        tracing::info!("is_attackers_text(): input = {:?}, matches regex: {}", s, result);
+        result
     }
 
     fn can_attack(bot: &Bot) -> bool {
-        bot.battlefield_creatures.iter().any(|card| {
+        bot.battlefield_creatures.iter().any(|(_name, card)| {
             if let crate::app::card_library::CardType::Creature(creature) = &card.card_type {
                 !creature.summoning_sickness
             } else {
@@ -57,7 +62,6 @@ impl AttackPhaseState {
             }
         })
     }
-
     pub fn process_attack_phase(&self, bot: &mut Bot) {
         // 1. Ciklus: addig várunk, amíg a main region text "All Attack"-et ad,
         //    itt mindig a red button (white_invert_image) feldolgozását használjuk.
