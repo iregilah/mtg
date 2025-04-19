@@ -1,4 +1,4 @@
-// creature_positions.rs
+// app/creature_positions.rs
 
 /// Egy creature pozícióját tartalmazza:
 /// - Az OCR által érintett térrész vízszintes határai (ocr_x1, ocr_x2) és a vertikális határai (ocr_y1, ocr_y2).

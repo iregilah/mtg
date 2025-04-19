@@ -1,23 +1,25 @@
-// bot.rs
+// app/bot.rs
 
-use crate::app::card_library::Card;
-use std::collections::HashMap;
-use std::process::Command;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
-use image::{DynamicImage, ImageBuffer, Rgba};
+use std::{
+    collections::HashMap,
+    process::Command,
+    thread::sleep,
+    time::{Duration, Instant},
+};
+
+use image::{DynamicImage, ImageBuffer};
 use image::imageops::crop_imm;
+use image::Rgba;
 use screenshot::get_screenshot;
-use std::f64;
-// Fontos: az app modulban legyenek a megfelelő folder struktúrák (ui, card, creature_positions stb.)
-use crate::app::ui::{Cords, set_cursor_pos, left_click, press_key};
-use crate::app::cards_positions::get_card_positions;
-use crate::app::ocr::{preprocess_image, read_creature_text, sanitize_ocr_text};
-use crate::app::card_library::{build_card_library, CardType, CREATURE_NAMES, LAND_NAMES};
+use tracing::{error, info, warn};
 
-// <- Integráció: importáljuk a creature_positions modulból a két függvényt.
-use crate::app::creature_positions::{get_own_creature_positions, get_opponent_creature_positions};
-use crate::app::ui::{win32_get_color, get_average_color, is_color_within_tolerance};
+use crate::app::{
+    card_library::{Card, build_card_library, CardType, LAND_NAMES},
+    ui::{Cords, set_cursor_pos, left_click, press_key, get_average_color, is_color_within_tolerance},
+    cards_positions::get_card_positions,
+    creature_positions::{get_own_creature_positions, get_opponent_creature_positions},
+    ocr::{preprocess_image, read_creature_text, sanitize_ocr_text},
+};
 
 pub struct Bot {
     pub end_game_counter: u32,         // Játék végi számláló (előbb, mint majd a teljes játéklogika részletezése megtörténik).
@@ -83,11 +85,11 @@ impl Bot {
     pub fn draw_card(&mut self) {
         let new_index = self.card_count;
         let new_count = new_index + 1;
-        let positions = crate::app::cards_positions::get_card_positions(new_count, self.screen_width as u32);
+        let positions = get_card_positions(new_count, self.screen_width as u32);
         let pos = positions[new_index];
         let card_y = ((self.screen_height as f64) * 0.97).floor() as i32;
 
-        tracing::info!("Drawing → hovering new slot at index {} @ {:?}", new_index, pos);
+        info!("Drawing → hovering new slot at index {} @ {:?}", new_index, pos);
         set_cursor_pos(pos.hover_x as i32, card_y);
         sleep(Duration::from_secs(2));
 
@@ -103,14 +105,14 @@ impl Bot {
 
         self.cards_texts.push(text.clone());
         self.card_count = new_count;
-        tracing::info!("Drew card '{}' → Updated hand: {:?}", text, self.cards_texts);
+        info!("Drew card '{}' → Updated hand: {:?}", text, self.cards_texts);
     }
     pub fn play_land(&mut self) {
         if !self.land_played_this_turn {
             if let Some((index, card_text)) = self.cards_texts.iter().enumerate()
                 .find(|(_i, text)| LAND_NAMES.iter().any(|&land| text.contains(land)))
             {
-                tracing::info!("Found land card '{}' at index {}. Playing it.", card_text, index);
+                info!("Found land card '{}' at index {}. Playing it.", card_text, index);
                 Self::play_card(self, index);
                 self.land_number += 1;
                 self.land_count += 1;
@@ -124,13 +126,13 @@ impl Bot {
         // find and cast one instant
         if let Some((i, _text)) = self.cards_texts.iter().enumerate().find(|(_, txt)| {
             self.can_cast_instant() &&
-                crate::app::card_library::build_card_library().values().any(|card| {
+                build_card_library().values().any(|card| {
                     matches!(card.card_type, CardType::Instant(_)) &&
                         Bot::text_contains(&card.name, txt)
                 })
         }) {
             // get the Card struct
-            let card_library = crate::app::card_library::build_card_library();
+            let card_library = build_card_library();
             if let Some(card) = card_library.values().find(|c| {
                 matches!(c.card_type, CardType::Instant(_)) &&
                     Bot::text_contains(&c.name, &self.cards_texts[i])
@@ -149,7 +151,7 @@ impl Bot {
                         let click_y = ((p.click_y1 + p.click_y2) / 2) as i32;
                         set_cursor_pos(click_x, click_y);
                         left_click();
-                        tracing::info!("Targeted instant at creature #{}", creature_index);
+                        info!("Targeted instant at creature #{}", creature_index);
                     }
                 }
             }
@@ -157,33 +159,24 @@ impl Bot {
     }
     /// Megpróbálja kijátszani a paraméterként kapott kártyát, ha elég mana áll rendelkezésre.
     /// Ha sikeres, visszaadja a felhasznált teljes mana mennyiségét.
-    fn try_cast_card(&mut self, pos: usize, card: &crate::app::card_library::Card) -> Option<u32> {
+    fn try_cast_card(&mut self, pos: usize, card: &Card) -> Option<u32> {
         let cost = card.mana_cost.clone();
         let colored_cost = cost.colored();
         let total_cost = cost.total();
         if self.land_number >= colored_cost {
             let leftover = self.land_number - colored_cost;
             if leftover >= cost.colorless {
-                tracing::info!(
-                    "Casting '{}' with cost: {} colored, {} colorless, total cost: {}",
-                    card.name, colored_cost, cost.colorless, total_cost
-                );
+                info!("Casting '{}' with cost: {} colored, {} colorless, total cost: {}", card.name, colored_cost, cost.colorless, total_cost);
                 Self::play_card(self, pos);
                 self.last_cast_card_name = card.name.clone();
                 sleep(Duration::from_secs(3)); //TODO this time should me smaller
-                tracing::info!("!!!!!!waited 3 sec");
+                info!("!!!!!!waited 3 sec");
                 return Some(total_cost);
             } else {
-                tracing::info!(
-                    "Not enough leftover mana for '{}'. Required {} colorless, leftover {}.",
-                    card.name, cost.colorless, leftover
-                );
+                info!("Not enough leftover mana for '{}'. Required {} colorless, leftover {}.", card.name, cost.colorless, leftover);
             }
         } else {
-            tracing::info!(
-                "Not enough colored mana for '{}'. Required: {}, available: {}.",
-                card.name, colored_cost, self.land_number
-            );
+            info!("Not enough colored mana for '{}'. Required: {}, available: {}.", card.name, colored_cost, self.land_number);
         }
         None
     }
@@ -196,7 +189,7 @@ impl Bot {
         F: Fn(&CardType) -> bool,
     {
         let mut mana_available = self.land_number;
-        let card_library = crate::app::card_library::build_card_library();
+        let card_library = build_card_library();
 
         // Iterálunk visszafelé az aktuális self.cards_texts tömbön.
         let mut i = self.cards_texts.len();
@@ -244,7 +237,7 @@ impl Bot {
     where
         F: Fn(&CardType) -> bool,
     {
-        let library = crate::app::card_library::build_card_library();
+        let library = build_card_library();
         self.cards_texts.iter().any(|ocr_text| {
             library.values().any(|card| {
                 // Match card type
@@ -304,7 +297,7 @@ impl Bot {
     /// centralizálva ezzel a creature-k kijátszás logikáját.
     pub fn process_creature_casting(&mut self) {
         if self.land_number > 0 {
-            let card_library = crate::app::card_library::build_card_library();
+            let card_library = build_card_library();
             let creature_exists = self.cards_texts.iter().any(|text| {
                 card_library.values().any(|card| {
                     if let CardType::Creature(_) = card.card_type {
@@ -315,7 +308,7 @@ impl Bot {
                 })
             });
             if creature_exists {
-                tracing::info!("Creature card detected in hand. Attempting to cast creature.");
+                info!("Creature card detected in hand. Attempting to cast creature.");
                 self.cast_creatures();
                 Bot::update_battlefield_creatures_from_ocr(self);
             }
@@ -325,7 +318,7 @@ impl Bot {
     pub fn play_card(bot: &mut Bot, card_index: usize) {
         let positions = get_card_positions(bot.card_count, bot.screen_width as u32);
         if card_index >= positions.len() {
-            tracing::error!("Error: Card index {} is out of range. Only {} cards available.", card_index, positions.len());
+            error!("Error: Card index {} is out of range. Only {} cards available.", card_index, positions.len());
             return;
         }
         let pos = positions[card_index];
@@ -343,18 +336,18 @@ impl Bot {
     pub fn remove_card_from_hand(bot: &mut Bot, card_index: usize) {
         if card_index < bot.cards_texts.len() {
             let removed = bot.cards_texts.remove(card_index);
-            tracing::info!("Removed card '{}' from hand at index {}.", removed, card_index);
-            tracing::info!("Updated hand: {:?}", bot.cards_texts);
+            info!("Removed card '{}' from hand at index {}.", removed, card_index);
+            info!("Updated hand: {:?}", bot.cards_texts);
             bot.card_count = bot.cards_texts.len();
         } else {
-            tracing::warn!("Attempted to remove card at invalid index {}.", card_index);
+            warn!("Attempted to remove card at invalid index {}.", card_index);
         }
     }
 
     pub fn text_contains(name: &str, ocr_text: &str) -> bool {
-        //tracing::info!("text_contains() called with name = {:?} and ocr_text = {:?}", name, ocr_text);
+        //info!("text_contains() called with name = {:?} and ocr_text = {:?}", name, ocr_text);
         let result = ocr_text.contains(name);
-        // tracing::info!("text_contains() returning: {}", result);
+        // info!("text_contains() returning: {}", result);
         result
     }
 
@@ -374,32 +367,32 @@ impl Bot {
         max_count: usize,
     ) -> usize {
         let mut count = initial_count;
-        tracing::info!("Starting branch: initial_count={}, first_step={}, step={}, max_count={}", count, first_step, step, max_count);
+        info!("Starting branch: initial_count={}, first_step={}, step={}, max_count={}", count, first_step, step, max_count);
         // Move to the first neighboring slot
         examined_rect_x -= first_step;
 
         // Walk until we hit max_count or run out of screen
         while count < max_count && examined_rect_x >= 0 {
             let sample_color = get_average_color(examined_rect_x, y1, rect_width, region_height);
-            tracing::info!("Branch: examined_rect_x={}, sample_color={:?}",examined_rect_x, sample_color);
+            info!("Branch: examined_rect_x={}, sample_color={:?}",examined_rect_x, sample_color);
 
             if is_color_within_tolerance(sample_color, target_color, tol) {
                 count += 2;
-                tracing::info!("Branch: increasing count to {}", count);
+                info!("Branch: increasing count to {}", count);
                 examined_rect_x -= step;
             } else {
-                tracing::info!("Branch: color out of tolerance, stopping");
+                info!("Branch: color out of tolerance, stopping");
                 break;
             }
         }
-        tracing::info!("Branch final creature count={}", count);
+        info!("Branch final creature count={}", count);
         count
     }
 
 
     /// Detects how many creatures are on one side of the board.
     fn detect_creature_count_for_side(screen_width: u32, screen_height: u32, is_opponent: bool) -> usize {
-        tracing::info!("detect_creature_count_for_side() called with screen_width = {}, screen_height = {}, is_opponent = {}", screen_width, screen_height, is_opponent);
+        info!("detect_creature_count_for_side() called with screen_width = {}, screen_height = {}, is_opponent = {}", screen_width, screen_height, is_opponent);
         let screen_width_f = screen_width as f64;
         let screen_height_f = screen_height as f64;
 
@@ -418,7 +411,7 @@ impl Bot {
 
         let screen_center_x = (screen_width as i32) / 2;
         let examined_rect_x = screen_center_x - rect_width / 2;
-        tracing::info!("Calculated values: y1 = {}, y2 = {}, region_height = {}, rect_width = {}, screen_center_x = {}, center_rect_x = {}", y1, y2, region_height, rect_width, screen_center_x, examined_rect_x);
+        info!("Calculated values: y1 = {}, y2 = {}, region_height = {}, rect_width = {}, screen_center_x = {}, center_rect_x = {}", y1, y2, region_height, rect_width, screen_center_x, examined_rect_x);
 
         // Target color and tolerance for card detection
         let target_color = (210, 175, 157);
@@ -426,9 +419,9 @@ impl Bot {
 
         // Check the center slot first
         let center_color = get_average_color(examined_rect_x, y1, rect_width, region_height);
-        tracing::info!("Center area average color: {:?}", center_color);
+        info!("Center area average color: {:?}", center_color);
         let center_is_card = is_color_within_tolerance(center_color, target_color, tol);
-        tracing::info!("Center area considered as card: {}", center_is_card);
+        info!("Center area considered as card: {}", center_is_card);
 
         // Precompute stepping distances
         let scale = screen_width_f / 677.292;
@@ -454,8 +447,8 @@ impl Bot {
         // 1) hány creature van a mezőn mindkét oldalon?
         let own_count = Self::detect_creature_count_for_side(bot.screen_width as u32, bot.screen_height as u32, false);
         let opp_count = Self::detect_creature_count_for_side(bot.screen_width as u32, bot.screen_height as u32, true);
-        tracing::info!("Detected own creature count: {}", own_count);
-        tracing::info!("Detected opponent creature count: {}", opp_count);
+        info!("Detected own creature count: {}", own_count);
+        info!("Detected opponent creature count: {}", opp_count);
 
         // 2) saját creature-k betöltése
         bot.battlefield_creatures.clear();
@@ -463,13 +456,13 @@ impl Bot {
         for (i, pos) in own_positions.into_iter().enumerate() {
             let name = read_creature_text(pos, i + 1, false, bot.screen_width as u32, bot.screen_height as u32);
             if let Some(card) = library.get(&name) {
-                tracing::info!("Found own battlefield creature: {}", name);
+                info!("Found own battlefield creature: {}", name);
                 bot.battlefield_creatures.insert(name.clone(), card.clone());
             } else if !name.is_empty() {
-                tracing::warn!("Unknown own battlefield creature OCR’d as `{}`", name);
+                warn!("Unknown own battlefield creature OCR’d as `{}`", name);
             }
         }
-        tracing::info!("Own battlefield map keys: {:?}", bot.battlefield_creatures.keys());
+        info!("Own battlefield map keys: {:?}", bot.battlefield_creatures.keys());
 
         // 3) ellenfél creature-k betöltése
         bot.battlefield_opponent_creatures.clear();
@@ -477,13 +470,13 @@ impl Bot {
         for (i, pos) in opp_positions.into_iter().enumerate() {
             let name = read_creature_text(pos, i + 1, true, bot.screen_width as u32, bot.screen_height as u32);
             if let Some(card) = library.get(&name) {
-                tracing::info!("Found opponent battlefield creature: {}", name);
+                info!("Found opponent battlefield creature: {}", name);
                 bot.battlefield_opponent_creatures.insert(name.clone(), card.clone());
             } else if !name.is_empty() {
-                tracing::warn!("Unknown opponent battlefield creature OCR’d as `{}`", name);
+                warn!("Unknown opponent battlefield creature OCR’d as `{}`", name);
             }
         }
-        tracing::info!("Opponent battlefield map keys: {:?}", bot.battlefield_opponent_creatures.keys());
+        info!("Opponent battlefield map keys: {:?}", bot.battlefield_opponent_creatures.keys());
     }
 
 
@@ -491,30 +484,30 @@ impl Bot {
         self.cards_texts.clear(); // Töröljük a korábbi eredményeket.
         for i in 0..self.card_count {
             let text = self.get_card_text(i);
-            tracing::info!("Card {} text: {}", i, text);
+            info!("Card {} text: {}", i, text);
             self.cards_texts.push(text);
         }
-        tracing::info!("OCR results for cards: {:?}", self.cards_texts);
+        info!("OCR results for cards: {:?}", self.cards_texts);
     }
 
     pub fn get_card_text(&self, index: usize) -> String {
         let positions = get_card_positions(self.card_count, self.screen_width as u32);
         if index >= positions.len() {
-            tracing::error!("Index {} out of range", index);
+            error!("Index {} out of range", index);
             return String::new();
         }
         let pos = positions[index];
         // A képernyő alsó 97%-a
         let card_y = ((self.screen_height as f64) * 0.97).floor() as i32;
         set_cursor_pos(pos.hover_x as i32, card_y);
-        tracing::info!("Hovering over card {} at ({}, {})", index, pos.hover_x, card_y);
+        info!("Hovering over card {} at ({}, {})", index, pos.hover_x, card_y);
         sleep(Duration::from_secs(2));
 
         // Képernyőkép készítése
         let screenshot = match get_screenshot(0) {
             Ok(scn) => scn,
             Err(_) => {
-                tracing::error!("Screenshot error on card {}", index);
+                error!("Screenshot error on card {}", index);
                 return String::new();
             }
         };
@@ -525,20 +518,20 @@ impl Bot {
         };
         let image_buf_opt = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, data_vec);
         if image_buf_opt.is_none() {
-            tracing::error!("Image buffer error on card {}", index);
+            error!("Image buffer error on card {}", index);
             return String::new();
         }
         let image_buf = image_buf_opt.unwrap();
         let dyn_img = DynamicImage::ImageRgba8(image_buf);
 
         if pos.ocr_x2 <= pos.ocr_x1 || pos.ocr_x2 > width {
-            tracing::error!("Invalid OCR horizontal region for card {}", index);
+            error!("Invalid OCR horizontal region for card {}", index);
             return String::new();
         }
         let ocr_y1 = ((232.606 / 381.287) * (self.screen_height as f64)).floor() as u32;
         let ocr_y2 = ((240.832 / 381.287) * (self.screen_height as f64)).floor() as u32;
         if ocr_y2 <= ocr_y1 {
-            tracing::error!("Invalid OCR vertical region.");
+            error!("Invalid OCR vertical region.");
             return String::new();
         }
         let cropped = crop_imm(&dyn_img, pos.ocr_x1, ocr_y1, pos.ocr_x2 - pos.ocr_x1, ocr_y2 - ocr_y1)
@@ -546,7 +539,7 @@ impl Bot {
         let preprocessed = preprocess_image(&DynamicImage::ImageRgba8(cropped));
         let temp_filename = format!("temp_card_{}.png", index);
         if let Err(e) = preprocessed.save(&temp_filename) {
-            tracing::error!("Error saving temporary image for card {}: {:?}", index, e);
+            error!("Error saving temporary image for card {}: {:?}", index, e);
             return String::new();
         }
         let output = Command::new(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
@@ -563,15 +556,15 @@ impl Bot {
                 sanitize_ocr_text(raw_text.trim())
             }
             Ok(output) => {
-                tracing::error!("Tesseract error for card {}: {}", index, String::from_utf8_lossy(&output.stderr));
+                error!("Tesseract error for card {}: {}", index, String::from_utf8_lossy(&output.stderr));
                 String::from("OCR failed")
             }
             Err(e) => {
-                tracing::error!("Error running Tesseract for card {}: {:?}", index, e);
+                error!("Error running Tesseract for card {}: {:?}", index, e);
                 String::from("OCR failed")
             }
         };
-        tracing::info!("Card {} text: {}", index, card_text);
+        info!("Card {} text: {}", index, card_text);
         card_text
     }
 }

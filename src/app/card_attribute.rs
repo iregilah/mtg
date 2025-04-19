@@ -1,3 +1,5 @@
+// app/card_attribute.rs
+
 use std::fmt::Debug;
 #[derive(Debug, Clone)]
 pub enum Effect {

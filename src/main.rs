@@ -1,3 +1,6 @@
+// main.rs
+
+use tracing::info;
 use MTGA_me::app::*;
 use tracing_subscriber;
 
@@ -14,7 +17,7 @@ fn main() {
     // Parancssori argumentumok ellenőrzése
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
-        tracing::info!("RightClick to get coordinates. LeftClick for exit (Not implemented in Rust version).");
+        info!("RightClick to get coordinates. LeftClick for exit (Not implemented in Rust version).");
     } else {
         App::start();
     }

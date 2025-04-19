@@ -1,16 +1,33 @@
-use image::Rgba;
-use std::ptr::null_mut;
-use std::thread::sleep;
-use std::time::Duration;
-use std::ffi::OsStr;
-use std::os::windows::ffi::OsStrExt;
-use winapi::um::wingdi::*;
-use winapi::um::winuser::*;
-use winapi::um::shellscalingapi::*;
-use winapi::shared::windef::*;
+// app/ui.rs
+
+use tracing::{debug, error, info};
+
+use std::{
+    ffi::OsStr,
+    os::windows::ffi::OsStrExt,
+    ptr::null_mut,
+    thread::sleep,
+    time::Duration,
+};
+
 use screenshot::get_screenshot;
+
+use image::{ImageBuffer, Rgba};
+
+use winapi::{
+    shared::windef::HWND,
+    um::{
+        wingdi::GetPixel,
+        winuser::{
+            FindWindowW, GetDC, ReleaseDC, SetCursorPos,
+            mouse_event, keybd_event,
+            MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+            KEYEVENTF_KEYUP,
+        },
+    },
+};
+
 use chrono::Local;
-use image::ImageBuffer;
 
 /// Represents an RGB color.
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -37,7 +54,7 @@ pub fn win32_get_color(x: i32, y: i32) -> Color {
 
 /// Computes the average color over a rectangular region starting at (x, y).
 pub fn get_average_color(x: i32, y: i32, width: i32, height: i32) -> (u8, u8, u8) {
-    tracing::info!("get_average_color() called with x = {}, y = {}, width = {}, height = {}", x, y, width, height);
+    info!("get_average_color() called with x = {}, y = {}, width = {}, height = {}", x, y, width, height);
     let mut r_total: u32 = 0;
     let mut g_total: u32 = 0;
     let mut b_total: u32 = 0;
@@ -46,7 +63,7 @@ pub fn get_average_color(x: i32, y: i32, width: i32, height: i32) -> (u8, u8, u8
         for j in 0..height {
             let col = win32_get_color(x + i, y + j);
             // Debug log minden egyes pixelért (ez info vagy debug szintű lehet, ha túl sok)
-            tracing::debug!("Pixel at ({}, {}) has color: {:?}", x + i, y + j, col);
+            debug!("Pixel at ({}, {}) has color: {:?}", x + i, y + j, col);
             r_total += col.r as u32;
             g_total += col.g as u32;
             b_total += col.b as u32;
@@ -54,13 +71,13 @@ pub fn get_average_color(x: i32, y: i32, width: i32, height: i32) -> (u8, u8, u8
         }
     }
     if count == 0 {
-        tracing::error!("get_average_color(): count = 0, returning (0, 0, 0)");
+        error!("get_average_color(): count = 0, returning (0, 0, 0)");
         return (0, 0, 0);
     }
     let avg_r = (r_total / count) as u8;
     let avg_g = (g_total / count) as u8;
     let avg_b = (b_total / count) as u8;
-    tracing::info!("get_average_color() returning average color: ({}, {}, {})", avg_r, avg_g, avg_b);
+    info!("get_average_color() returning average color: ({}, {}, {})", avg_r, avg_g, avg_b);
     (avg_r, avg_g, avg_b)
 }
 
@@ -87,7 +104,7 @@ pub fn is_color_within_tolerance(color: (u8, u8, u8), target: (u8, u8, u8), tol:
 
     let result = diff_rg <= tol && diff_gb <= tol && diff_rb <= tol;
 
-    tracing::info!(
+    info!(
         "is_color_within_tolerance() called with color = {:?}, target = {:?}, tol = {}. \
          Computed ratios: (R/G: {:.3}, G/B: {:.3}, R/B: {:.3}), Target ratios: (R/G: {:.3}, G/B: {:.3}, R/B: {:.3}), \
          Differences: (R/G: {:.3}, G/B: {:.3}, R/B: {:.3}), result: {}",

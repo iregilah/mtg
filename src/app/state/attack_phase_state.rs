@@ -1,16 +1,16 @@
-// state/attack_phase_state.rs
+// app/state/attack_phase_state.rs
 
-use crate::app::bot::Bot;
-use crate::app::state::State;
-use std::thread::sleep;
-use std::time::Duration;
-use crate::app::ocr::check_main_region_text;
-use crate::app::state::opponents_turn_state::OpponentsTurnState;
-use crate::app::ui::{check_button_color, press_key};
-use crate::app::state::second_main_phase_state::SecondMainPhaseState;
-use crate::app::ui;
+use std::{thread::sleep, time::Duration};
+use tracing::{info};
+
 use regex::Regex;
 
+use crate::app::{
+    bot::Bot,
+    ocr::check_main_region_text,
+    state::{State, second_main_phase_state::SecondMainPhaseState},
+    ui::press_key,
+};
 
 pub struct AttackPhaseState {
     no_attack: bool,
@@ -24,9 +24,9 @@ impl AttackPhaseState {
 
 impl State for AttackPhaseState {
     fn update(&mut self, bot: &mut Bot) {
-        tracing::info!("AttackPhaseState: starting attack phase.");
+        info!("AttackPhaseState: starting attack phase.");
         if !Self::can_attack(bot) {
-            tracing::info!("No creature can attack (all have summoning sickness or none exist). Transitioning to OpponentsTurnState.");
+            info!("No creature can attack (all have summoning sickness or none exist). Transitioning to OpponentsTurnState.");
             self.no_attack = true;
             return;
         }
@@ -34,7 +34,7 @@ impl State for AttackPhaseState {
     }
 
     fn next(&mut self) -> Box<dyn State> {
-        tracing::info!("AttackPhaseState: transitioning to SecondMainPhaseState.");
+        info!("AttackPhaseState: transitioning to SecondMainPhaseState.");
         Box::new(SecondMainPhaseState::new())
     }
 }
@@ -49,7 +49,7 @@ impl AttackPhaseState {
         // - végül opcionális szóközök, és a szöveg vége.
         let re = Regex::new(r"^\s*\d+\s+Attackers?\s*$").unwrap();
         let result = re.is_match(s);
-        tracing::info!("is_attackers_text(): input = {:?}, matches regex: {}", s, result);
+        info!("is_attackers_text(): input = {:?}, matches regex: {}", s, result);
         result
     }
 
@@ -67,7 +67,7 @@ impl AttackPhaseState {
         //    itt mindig a red button (white_invert_image) feldolgozását használjuk.
         loop {
             let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, true);
-            tracing::info!("(Attack phase) Main region text: {}", main_text);
+            info!("(Attack phase) Main region text: {}", main_text);
             if main_text.contains("All Attack") {
                 press_key(winapi::um::winuser::VK_SPACE as u16);
                 sleep(Duration::from_secs(1));
@@ -83,7 +83,7 @@ impl AttackPhaseState {
         // 2. Ciklus: várjuk, hogy a main region text "X Attackers" formátumú legyen.
         loop {
             let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, true);
-            tracing::info!("(Attack phase) Main region text after All Attack: {}", main_text);
+            info!("(Attack phase) Main region text after All Attack: {}", main_text);
             if Self::is_attackers_text(&main_text) {
                 press_key(winapi::um::winuser::VK_SPACE as u16);
                 sleep(Duration::from_secs(1));
@@ -95,7 +95,7 @@ impl AttackPhaseState {
         // 3. Ciklus: amíg "Next" szerepel, kattintsuk a main region text-et
         loop {
             let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, true);
-            tracing::info!("(Attack phase) Main region text in Next loop: {}", main_text);
+            info!("(Attack phase) Main region text in Next loop: {}", main_text);
             if main_text.contains("Next") {
                 press_key(winapi::um::winuser::VK_SPACE as u16);
                 sleep(Duration::from_secs(1));

@@ -1,3 +1,6 @@
+// app/cards_positions.rs
+
+use tracing::warn;
 
 /// --- Kártya pozíciók ---
 /// - `hover_x`: azt a vízszintes koordinátát adja meg, ahová az egérmutatót kell mozgatni a tooltip megjelenítéséhez.
@@ -213,7 +216,7 @@ pub fn get_card_positions(card_count: usize, screen_width: u32) -> Vec<CardPosit
             },
         ],
         _ => {
-            tracing::warn!("Unsupported card count: {}", card_count);
+            warn!("Unsupported card count: {}", card_count);
             vec![]
         }
     }

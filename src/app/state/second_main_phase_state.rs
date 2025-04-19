@@ -1,21 +1,22 @@
-use crate::app::bot::Bot;
-use crate::app::state::State;
-use std::thread::sleep;
-use std::time::Duration;
-use crate::app::ocr::check_main_region_text;
-use crate::app::ui::press_key;
-use crate::app::state::start_state::StartState;
-use crate::app::card_library::{CardType, CREATURE_NAMES, LAND_NAMES};
-use crate::app::card_library::CardType::Creature;
-use crate::app::state::opponents_turn_state::OpponentsTurnState;
+// app/state/second_main_phase_state.rs
 
+use std::{thread::sleep, time::Duration};
+use tracing::{info};
+
+use crate::app::{
+    bot::Bot,
+    state::{State, opponents_turn_state::OpponentsTurnState},
+    ui::press_key,
+    ocr::check_main_region_text,
+    card_library::CardType::Creature,
+};
 
 pub struct SecondMainPhaseState {}
 
 
 impl State for SecondMainPhaseState {
     fn update(&mut self, bot: &mut Bot) {
-        tracing::info!("SecondMainPhaseState: handling second main phase.");
+        info!("SecondMainPhaseState: handling second main phase.");
 
         // 1. Első ellenőrzés: normál feldolgozás
         if !self.initial_check(bot) {
@@ -39,7 +40,7 @@ impl State for SecondMainPhaseState {
 
 
     fn next(&mut self) -> Box<dyn State> {
-        tracing::info!("SecondMainPhaseState: transitioning to new round (StartState).");
+        info!("SecondMainPhaseState: transitioning to new round (StartState).");
         Box::new(OpponentsTurnState::new())
     }
 }
@@ -59,9 +60,9 @@ impl SecondMainPhaseState {
             bot.screen_height as u32,
             false,
         );
-        tracing::info!("(Initial check) Main region text (normal): {}", main_text);
+        info!("(Initial check) Main region text (normal): {}", main_text);
         if main_text.contains("Opponent's Turn") {
-            tracing::info!("Detected 'Opponent's Turn' during initial check.");
+            info!("Detected 'Opponent's Turn' during initial check.");
             return false;
         }
         true
@@ -76,12 +77,9 @@ impl SecondMainPhaseState {
             bot.screen_height as u32,
             false,
         );
-        tracing::info!(
-            "(Post-cast check) Main region text (normal): {}",
-            main_text_after
-        );
+        info!("(Post-cast check) Main region text (normal): {}", main_text_after);
         if main_text_after.contains("Opponent's Turn") {
-            tracing::info!("Detected 'Opponent's Turn' after casting.");
+            info!("Detected 'Opponent's Turn' after casting.");
             return false;
         }
         true
@@ -96,13 +94,13 @@ impl SecondMainPhaseState {
                 bot.screen_height as u32,
                 true,
             );
-            tracing::info!("(Red processing) Main region text: {}", main_text_red);
+            info!("(Red processing) Main region text: {}", main_text_red);
             if main_text_red.contains("Next") {
-                tracing::info!("Detected 'Next' in red mode. Clicking...");
+                info!("Detected 'Next' in red mode. Clicking...");
                 press_key(winapi::um::winuser::VK_SPACE as u16);
                 sleep(Duration::from_secs(1));
             } else if main_text_red.contains("End Turn") {
-                tracing::info!("Detected 'End Turn' in red mode. Clicking to end turn.");
+                info!("Detected 'End Turn' in red mode. Clicking to end turn.");
                 press_key(winapi::um::winuser::VK_SPACE as u16);
                 break;
             } else {

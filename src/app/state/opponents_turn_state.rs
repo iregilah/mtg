@@ -1,11 +1,14 @@
-use crate::app::ui::press_key;
-use crate::app::bot::Bot;
-use crate::app::state::State;
-use std::thread::sleep;
-use std::time::Duration;
-use crate::app::ocr::check_main_region_text;
-use crate::app::state::first_main_phase_state::FirstMainPhaseState;
-use crate::app::ui::check_button_color;
+// app/state/opponents_turn_state.rs
+
+use std::{thread::sleep, time::Duration};
+use tracing::{info};
+
+use crate::app::{
+    bot::Bot,
+    state::{State, first_main_phase_state::FirstMainPhaseState},
+    ui::press_key,
+    ocr::check_main_region_text,
+};
 
 pub struct OpponentsTurnState {}
 
@@ -18,18 +21,18 @@ impl OpponentsTurnState {
 impl State for OpponentsTurnState {
     fn update(&mut self, bot: &mut Bot) {
         bot.land_played_this_turn = false;
-        tracing::info!("OpponentsTurnState: handling opponent's turn.");
+        info!("OpponentsTurnState: handling opponent's turn.");
         Self::process_opponents_turn(self, bot);
 
         // Mark that opponent turn has finished, so next draw should occur
         bot.last_opponent_turn = true;
 
-        tracing::info!("Opponent turn complete, will draw next turn.");
+        info!("Opponent turn complete, will draw next turn.");
         sleep(Duration::from_secs(1));
     }
 
     fn next(&mut self) -> Box<dyn State> {
-        tracing::info!("OpponentsTurnState: transitioning to FirstMainPhaseState.");
+        info!("OpponentsTurnState: transitioning to FirstMainPhaseState.");
         Box::new(FirstMainPhaseState::new())
     }
 }
@@ -43,27 +46,27 @@ impl OpponentsTurnState {
                 bot.screen_height as u32,
                 true,
             );
-            tracing::info!("(Opponent turn - red) Main region text: {}", main_text_red);
+            info!("(Opponent turn - red) Main region text: {}", main_text_red);
 
             // Handle "My Turn" and "Resolve" when in red mode
             if main_text_red.contains("My Turn") {
-                tracing::info!("Detected 'My Turn' in red mode. Pressing space.");
+                info!("Detected 'My Turn' in red mode. Pressing space.");
                 press_key(winapi::um::winuser::VK_SPACE as u16);
             }
             if main_text_red.contains("Resolve") {
-                tracing::info!("Detected 'Resolve' in red mode. Pressing space.");
+                info!("Detected 'Resolve' in red mode. Pressing space.");
                 press_key(winapi::um::winuser::VK_SPACE as u16);
             }
 
             // Handle "Pass"
             if main_text_red.contains("Pass") {
-                tracing::info!("Detected 'Pass' in non-red mode. Pressing space.");
+                info!("Detected 'Pass' in non-red mode. Pressing space.");
                 press_key(winapi::um::winuser::VK_SPACE as u16);
             }
 
             // If we see "Next", end opponent turn immediately
             if main_text_red.contains("Next") {
-                tracing::info!("Detected 'Next' in red mode. Ending opponent's turn phase.");
+                info!("Detected 'Next' in red mode. Ending opponent's turn phase.");
                 bot.draw_card();
                 break;
             }
@@ -75,7 +78,7 @@ impl OpponentsTurnState {
                 bot.screen_height as u32,
                 false,
             );
-            tracing::info!("(Opponent turn - non-red) Main region text: {}", main_text_non_red);
+            info!("(Opponent turn - non-red) Main region text: {}", main_text_non_red);
             */
 
             sleep(Duration::from_secs(2));
