@@ -1,24 +1,27 @@
 // app/bot.rs
 
+
+use crate::app::ocr::sanitize_ocr_text;
+use crate::app::ocr::preprocess_image;
+use image::imageops::crop_imm;
+use image::Rgba;
+use image::{DynamicImage, ImageBuffer};
 use std::{
     collections::HashMap,
     process::Command,
     thread::sleep,
     time::{Duration, Instant},
 };
-
-use image::{DynamicImage, ImageBuffer};
-use image::imageops::crop_imm;
-use image::Rgba;
-use screenshot::get_screenshot;
 use tracing::{error, info, warn};
 
+use screenshot::get_screenshot;
+
 use crate::app::{
-    card_library::{Card, build_card_library, CardType, LAND_NAMES},
-    ui::{Cords, set_cursor_pos, left_click, press_key, get_average_color, is_color_within_tolerance},
+    card_library::{build_card_library, Card, CardType, LAND_NAMES},
     cards_positions::get_card_positions,
     creature_positions::{get_own_creature_positions, get_opponent_creature_positions},
-    ocr::{preprocess_image, read_creature_text, sanitize_ocr_text},
+    ui::{Cords, set_cursor_pos, left_click, press_key, get_average_color, is_color_within_tolerance},
+    ocr::read_creature_text,
 };
 
 pub struct Bot {

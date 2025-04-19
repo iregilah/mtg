@@ -1,18 +1,19 @@
 // app/ocr.rs
 
+use std::{process::Command, slice, thread::sleep, time::Duration};
 use tracing::{error, info};
+use thiserror::Error;
 
 use screenshot::get_screenshot;
 
 use image::{DynamicImage, ImageBuffer};
 use image::imageops::{crop_imm, resize, FilterType};
 
-use std::process::Command;
-use std::slice;
-
-use thiserror::Error;
-
-use crate::app::creature_positions::CreaturePosition;
+use crate::app::{
+    cards_positions::get_card_positions,
+    creature_positions::CreaturePosition,
+    ui::{set_cursor_pos},
+};
 
 /// Keep only alphanumeric, whitespace, and a handful of punctuation.
 pub fn sanitize_ocr_text(input: &str) -> String {
@@ -303,5 +304,57 @@ pub fn read_creature_text(
     // 6) Run Tesseract
     let result = run_tesseract_pipeline(&processed, &temp_filename);
     info!("OCR result for slot #{}: {:?}", index, result);
+    result
+}
+
+/// Reads the visible text of one hand‐card by index on the battlefield.
+pub fn get_card_text(
+    index: usize,
+    card_count: usize,
+    screen_width: u32,
+    screen_height: u32,
+) -> String {
+    // 1) Hover over the card slot
+    let positions = get_card_positions(card_count, screen_width);
+    let pos = match positions.get(index) {
+        Some(p) => p,
+        None => {
+            error!("get_card_text(): index {} out of range ({} cards)", index, card_count);
+            return String::new();
+        }
+    };
+    let hover_y = ((screen_height as f64) * 0.97).floor() as i32;
+    set_cursor_pos(pos.hover_x as i32, hover_y);
+    sleep(Duration::from_secs(2));
+
+    // 2) Capture the full screen
+    let screen = match capture_screen() {
+        Some(img) => img,
+        None => {
+            error!("Failed to capture screen for card {}", index);
+            return String::new();
+        }
+    };
+
+    // 3) Crop to the card’s OCR region
+    let y1 = ((232.606 / 381.287) * screen_height as f64).floor() as u32;
+    let y2 = ((240.832 / 381.287) * screen_height as f64).floor() as u32;
+    let cropped = match crop_region(&screen, pos.ocr_x1, y1, pos.ocr_x2, y2) {
+        Ok(img) => img,
+        Err(e) => {
+            error!("crop_region failed for card {}: {}", index, e);
+            return String::new();
+        }
+    };
+
+    // 4) Preprocess for OCR
+    let processed = preprocess_image(&cropped);
+
+    // 5) Save a stable temp file & run Tesseract
+    let tmp = format!("temp_card_{}.png", index);
+    info!("Saving temp OCR image as '{}'", tmp);
+    let result = run_tesseract_pipeline(&processed, &tmp);
+
+    info!("OCR result for card {}: {:?}", index, result);
     result
 }
