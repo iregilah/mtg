@@ -1,11 +1,11 @@
 // app/state/first_main_phase_state.rs
 
-use std::{thread::sleep, time::Duration};
+//use std::{thread::sleep, time::Duration};
 use tracing::{info};
 
 use crate::app::{
     bot::Bot,
-    card_library::{build_card_library, CardType, LAND_NAMES},
+    card_library::{build_card_library, CardType},
     state::{
         State,
         attack_phase_state::AttackPhaseState,
@@ -21,8 +21,31 @@ impl State for FirstMainPhaseState {
     fn update(&mut self, bot: &mut Bot) {
         info!("FirstMainPhaseState: handling first main phase.");
 
-        // —— NEW: Only refresh battlefield OCR on subsequent turns, not the very first.
-        // We track this with a flag in Bot (e.g. `first_main_phase_done`).
+        self.refresh_battlefield_if_needed(bot);
+        self.untap_and_clear_sickness(bot);
+        self.play_land_step(bot);
+        self.cast_main_phase_creatures(bot);
+        self.cast_other_spells(bot);
+        self.decide_attack_or_skip(bot);
+    }
+
+    fn next(&mut self) -> Box<dyn State> {
+        if self.skip_to_opponent {
+            info!("Skipping AttackPhase -> OpponentsTurnState.");
+            Box::new(OpponentsTurnState::new())
+        } else {
+            info!("Proceeding to AttackPhaseState.");
+            Box::new(AttackPhaseState::new())
+        }
+    }
+}
+
+impl FirstMainPhaseState {
+    pub fn new() -> Self {
+        Self { skip_to_opponent: false }
+    }
+
+    fn refresh_battlefield_if_needed(&mut self, bot: &mut Bot) {
         if bot.first_main_phase_done {
             info!("Refreshing battlefield creatures from OCR at turn start.");
             Bot::update_battlefield_creatures_from_ocr(bot);
@@ -30,8 +53,9 @@ impl State for FirstMainPhaseState {
             info!("First main phase of the game; skipping initial OCR refresh.");
             bot.first_main_phase_done = true;
         }
+    }
 
-        // 0) Untap lands and clear summoning sickness
+    fn untap_and_clear_sickness(&self, bot: &mut Bot) {
         bot.land_number = bot.land_count;
         info!("Untap step: available mana = {}", bot.land_number);
         for (_key, card) in bot.battlefield_creatures.iter_mut() {
@@ -40,40 +64,38 @@ impl State for FirstMainPhaseState {
             }
         }
         info!("Creatures after untap: {:?}", bot.battlefield_creatures);
+    }
 
-        // 1) Play land if not yet played this turn
+    fn play_land_step(&self, bot: &mut Bot) {
         bot.play_land();
         info!("Available mana after playing land: {}", bot.land_number);
+    }
 
-        // 2) Cast creatures one by one, inserting each into our map with unique keys
-        loop {
-            if bot.land_number == 0 {
-                info!("No mana remaining—stopping creature casting loop.");
-                break;
-            }
+    fn cast_main_phase_creatures(&mut self, bot: &mut Bot) {
+        let library = build_card_library();
+        while bot.land_number > 0 {
             if let Some((name, cost)) = bot.cast_one_creature() {
                 info!("Successfully cast '{}', spent {} mana.", name, cost);
                 bot.land_number = bot.land_number.saturating_sub(cost);
 
-                // —— FIX #1: Allow duplicate names by generating a unique key per copy.
+                // allow duplicate keys
                 let mut key = name.clone();
                 if bot.battlefield_creatures.contains_key(&key) {
-                    // count existing copies
-                    let dup_count = bot
+                    let dup = bot
                         .battlefield_creatures
                         .keys()
                         .filter(|k| k.starts_with(&name))
                         .count()
                         + 1;
-                    key = format!("{}#{}", name, dup_count);
+                    key = format!("{}#{}", name, dup);
                 }
 
-                // clone the card from our library and insert under `key`
-                if let Some(mut card) = build_card_library().get(&name).cloned() {
+                // insert new creature tapped
+                if let Some(mut card) = library.get(&name).cloned() {
                     if let CardType::Creature(ref mut cr) = card.card_type {
-                        cr.summoning_sickness = true; // new creatures enter tapped
+                        cr.summoning_sickness = true;
                     }
-                    bot.battlefield_creatures.insert(key.clone(), card);
+                    bot.battlefield_creatures.insert(key, card);
                 }
 
                 info!(
@@ -82,7 +104,7 @@ impl State for FirstMainPhaseState {
                     bot.battlefield_creatures
                 );
 
-                // only re‐OCR battlefield if we have both mana and further creatures castable
+                // maybe OCR‐refresh
                 if bot.land_number > 0 && bot.can_cast_creature() {
                     info!("Still have mana & creatures to cast: refreshing battlefield OCR.");
                     Bot::update_battlefield_creatures_from_ocr(bot);
@@ -95,8 +117,9 @@ impl State for FirstMainPhaseState {
                 break;
             }
         }
+    }
 
-        // 3) Cast any other spells (instants/enchantments)
+    fn cast_other_spells(&self, bot: &mut Bot) {
         let spent = bot.cast_creatures();
         bot.land_number = spent;
         if spent > 0 {
@@ -104,9 +127,10 @@ impl State for FirstMainPhaseState {
         } else {
             info!("No affordable non‐creature spells left to cast.");
         }
+    }
 
-        // 4) Decide whether to enter AttackPhase or skip directly to OpponentsTurn
-        // 4a) If any non‐land card still affordable, proceed to AttackPhase
+    fn decide_attack_or_skip(&mut self, bot: &mut Bot) {
+        // if we still have non‐land spells to cast, go to attack
         if bot.land_number > 0 {
             let lib = build_card_library();
             let can_cast_more = bot.cards_texts.iter().any(|ocr| {
@@ -128,7 +152,7 @@ impl State for FirstMainPhaseState {
             }
         }
 
-        // 4b) Otherwise, if any creature is ready (no summoning sickness), go to AttackPhase
+        // otherwise, if any creature is ready, attack; else skip
         let can_attack = bot
             .battlefield_creatures
             .values()
@@ -144,21 +168,5 @@ impl State for FirstMainPhaseState {
             info!("No attackers available—skipping to OpponentsTurn.");
             self.skip_to_opponent = true;
         }
-    }
-
-    fn next(&mut self) -> Box<dyn State> {
-        if self.skip_to_opponent {
-            info!("Skipping AttackPhase -> OpponentsTurnState.");
-            Box::new(OpponentsTurnState::new())
-        } else {
-            info!("Proceeding to AttackPhaseState.");
-            Box::new(AttackPhaseState::new())
-        }
-    }
-}
-
-impl FirstMainPhaseState {
-    pub fn new() -> Self {
-        Self { skip_to_opponent: false }
     }
 }

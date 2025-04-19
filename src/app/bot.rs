@@ -1,27 +1,18 @@
 // app/bot.rs
 
-
-use crate::app::ocr::sanitize_ocr_text;
-use crate::app::ocr::preprocess_image;
-use image::imageops::crop_imm;
-use image::Rgba;
-use image::{DynamicImage, ImageBuffer};
 use std::{
     collections::HashMap,
-    process::Command,
     thread::sleep,
     time::{Duration, Instant},
 };
 use tracing::{error, info, warn};
-
-use screenshot::get_screenshot;
 
 use crate::app::{
     card_library::{build_card_library, Card, CardType, LAND_NAMES},
     cards_positions::get_card_positions,
     creature_positions::{get_own_creature_positions, get_opponent_creature_positions},
     ui::{Cords, set_cursor_pos, left_click, press_key, get_average_color, is_color_within_tolerance},
-    ocr::read_creature_text,
+    ocr::{read_creature_text, get_card_text}
 };
 
 pub struct Bot {
@@ -101,7 +92,12 @@ impl Bot {
             // Temporarily override card_count so get_card_text uses the right positions
             let old = self.card_count;
             self.card_count = new_count;
-            let t = self.get_card_text(new_index);
+            let t = get_card_text(
+                new_index,
+                new_count,
+                self.screen_width as u32,
+                self.screen_height as u32,
+            );
             self.card_count = old;
             t
         };
@@ -441,52 +437,77 @@ impl Bot {
         }
     }
 
+    /// Load creatures for one side (own or opponent) into a fresh HashMap.
+    fn load_side_creatures(
+        &self,
+        is_opponent: bool,
+        count: usize,
+        library: &HashMap<String, Card>,
+    ) -> HashMap<String, Card> {
+        let mut map = HashMap::new();
+        let positions = if is_opponent {
+            get_opponent_creature_positions(count, self.screen_width as u32, self.screen_height as u32)
+        } else {
+            get_own_creature_positions(count, self.screen_width as u32, self.screen_height as u32)
+        };
+        for (i, pos) in positions.into_iter().enumerate() {
+            let name = read_creature_text(pos, i + 1, is_opponent, self.screen_width as u32, self.screen_height as u32);
+            if let Some(card) = library.get(&name) {
+                info!(
+                    "Found {} battlefield creature: {}",
+                    if is_opponent { "opponent" } else { "own" },
+                    name
+                );
+                map.insert(name.clone(), card.clone());
+            } else if !name.is_empty() {
+                warn!(
+                    "Unknown {} battlefield creature OCR’d as `{}`",
+                    if is_opponent { "opponent" } else { "own" },
+                    name
+                );
+            }
+        }
+        info!(
+            "{} battlefield map keys: {:?}",
+            if is_opponent { "Opponent" } else { "Own" },
+            map.keys()
+        );
+        map
+    }
 
     // 3. Frissítő függvény, amely a creature_positions modul szerint feltölti a battlefield_creatures vektorokat
     pub fn update_battlefield_creatures_from_ocr(bot: &mut Bot) {
-        // először is előállítjuk a teljes kártyatárat
-        let library: HashMap<String, Card> = build_card_library();
+        let library = build_card_library();
 
-        // 1) hány creature van a mezőn mindkét oldalon?
-        let own_count = Self::detect_creature_count_for_side(bot.screen_width as u32, bot.screen_height as u32, false);
-        let opp_count = Self::detect_creature_count_for_side(bot.screen_width as u32, bot.screen_height as u32, true);
+        // detect counts
+        let own_count = Self::detect_creature_count_for_side(
+            bot.screen_width as u32,
+            bot.screen_height as u32,
+            false,
+        );
+        let opp_count = Self::detect_creature_count_for_side(
+            bot.screen_width as u32,
+            bot.screen_height as u32,
+            true,
+        );
         info!("Detected own creature count: {}", own_count);
         info!("Detected opponent creature count: {}", opp_count);
 
-        // 2) saját creature-k betöltése
-        bot.battlefield_creatures.clear();
-        let own_positions = get_own_creature_positions(own_count, bot.screen_width as u32, bot.screen_height as u32);
-        for (i, pos) in own_positions.into_iter().enumerate() {
-            let name = read_creature_text(pos, i + 1, false, bot.screen_width as u32, bot.screen_height as u32);
-            if let Some(card) = library.get(&name) {
-                info!("Found own battlefield creature: {}", name);
-                bot.battlefield_creatures.insert(name.clone(), card.clone());
-            } else if !name.is_empty() {
-                warn!("Unknown own battlefield creature OCR’d as `{}`", name);
-            }
-        }
-        info!("Own battlefield map keys: {:?}", bot.battlefield_creatures.keys());
-
-        // 3) ellenfél creature-k betöltése
-        bot.battlefield_opponent_creatures.clear();
-        let opp_positions = get_opponent_creature_positions(opp_count, bot.screen_width as u32, bot.screen_height as u32);
-        for (i, pos) in opp_positions.into_iter().enumerate() {
-            let name = read_creature_text(pos, i + 1, true, bot.screen_width as u32, bot.screen_height as u32);
-            if let Some(card) = library.get(&name) {
-                info!("Found opponent battlefield creature: {}", name);
-                bot.battlefield_opponent_creatures.insert(name.clone(), card.clone());
-            } else if !name.is_empty() {
-                warn!("Unknown opponent battlefield creature OCR’d as `{}`", name);
-            }
-        }
-        info!("Opponent battlefield map keys: {:?}", bot.battlefield_opponent_creatures.keys());
+        // load both sides in one line each
+        bot.battlefield_creatures = bot.load_side_creatures(false, own_count, &library);
+        bot.battlefield_opponent_creatures = bot.load_side_creatures(true, opp_count, &library);
     }
 
 
     pub fn examine_cards(&mut self) {
         self.cards_texts.clear(); // Töröljük a korábbi eredményeket.
         for i in 0..self.card_count {
-            let text = self.get_card_text(i);
+            let text = get_card_text(
+                i,
+                self.card_count,
+                self.screen_width as u32,
+                self.screen_height as u32,
+            );
             info!("Card {} text: {}", i, text);
             self.cards_texts.push(text);
         }
