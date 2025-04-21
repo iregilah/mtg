@@ -1,5 +1,7 @@
 // app/state/attack_phase_state.rs
 
+use crate::app::error::AppError;
+use crate::app::game_state::GamePhase;
 use std::{thread::sleep, time::Duration};
 use tracing::{info};
 
@@ -22,20 +24,24 @@ impl AttackPhaseState {
     }
 }
 
-impl State for AttackPhaseState {
-    fn update(&mut self, bot: &mut Bot) {
+impl State<AppError> for AttackPhaseState {
+    fn update(&mut self, bot: &mut Bot) -> Result<(), AppError> {
         info!("AttackPhaseState: starting attack phase.");
         if !Self::can_attack(bot) {
             info!("No creature can attack (all have summoning sickness or none exist). Transitioning to OpponentsTurnState.");
             self.no_attack = true;
-            return;
+            return Ok(());
         }
         self.process_attack_phase(bot);
+        Ok(())
     }
 
-    fn next(&mut self) -> Box<dyn State> {
+    fn next(&mut self) -> Box<dyn State<AppError>> {
         info!("AttackPhaseState: transitioning to SecondMainPhaseState.");
         Box::new(SecondMainPhaseState::new())
+    }
+    fn phase(&self) -> GamePhase {
+        GamePhase::Combat
     }
 }
 

@@ -1,5 +1,7 @@
 // app/state/start_state.rs
 
+use crate::app::error::AppError;
+use crate::app::game_state::GamePhase;
 use std::{thread::sleep, time::Duration};
 use tracing::{info};
 
@@ -13,13 +15,11 @@ use crate::app::{
 pub struct StartState {}
 
 impl StartState {
-    pub fn new() -> Self {
-        Self {}
-    }
+    pub fn new() -> Self { Self {} }
 }
 
-impl State for StartState {
-    fn update(&mut self, bot: &mut Bot) {
+impl State<AppError> for StartState {
+    fn update(&mut self, bot: &mut Bot) -> Result<(), AppError> {
         info!("StartState: initiating game start.");
         info!("{} Starting", Local::now().format("%Y-%m-%d %H:%M"));
         sleep(Duration::from_secs(5));
@@ -44,11 +44,14 @@ impl State for StartState {
         sleep(Duration::from_millis(500));
         left_click();
         info!("StartState: Start phase completed.");
+        Ok(())
     }
 
-    fn next(&mut self) -> Box<dyn State> {
+    fn next(&mut self) -> Box<dyn State<AppError>> {
         info!("StartState: transitioning to MulliganState.");
-        // Átmegyünk a mulligan fázisra
         Box::new(MulliganState::new())
+    }
+    fn phase(&self) -> GamePhase {
+        GamePhase::Beginning
     }
 }

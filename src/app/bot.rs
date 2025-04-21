@@ -1,5 +1,12 @@
 // app/bot.rs
 
+use crate::app::card_attribute::Damage;
+use crate::app::card_attribute::Effect;
+use crate::app::game_state::Player;
+use crate::app::game_state::Player as OtherPlayer;
+use crate::app::game_state::GameEvent;
+use crate::app::gre::Gre;
+use crate::app::error::AppError;
 use std::{
     collections::HashMap,
     thread::sleep,
@@ -8,12 +15,15 @@ use std::{
 use tracing::{error, info, warn};
 
 use crate::app::{
-    card_library::{build_card_library, Card, CardType, LAND_NAMES},
+    card_library::{build_card_library, Card, CardType},
     cards_positions::get_card_positions,
     creature_positions::{get_own_creature_positions, get_opponent_creature_positions},
     ui::{Cords, set_cursor_pos, left_click, press_key, get_average_color, is_color_within_tolerance},
-    ocr::{read_creature_text, get_card_text}
+    ocr::{read_creature_text, get_card_text},
 };
+
+use crate::app::game_state::{GameState, Strategy, SimpleHeuristic};
+
 
 pub struct Bot {
     pub end_game_counter: u32,         // Játék végi számláló (előbb, mint majd a teljes játéklogika részletezése megtörténik).
@@ -37,7 +47,9 @@ pub struct Bot {
     pub next_state_override: Option<StateOverride>,
     pub last_cast_card_name: String,
     pub first_main_phase_done: bool,
-
+    pub gre: Gre,
+    pub game_state: GameState,
+    pub strategy: Box<dyn Strategy>,
 }
 
 pub enum StateOverride {
@@ -47,10 +59,35 @@ pub enum StateOverride {
 impl Bot {
     pub fn new() -> Self {
         unsafe {
+            // Screen metrics
             let screen_width = winapi::um::winuser::GetSystemMetrics(winapi::um::winuser::SM_CXSCREEN);
             let screen_height = winapi::um::winuser::GetSystemMetrics(winapi::um::winuser::SM_CYSCREEN);
             let cords = Cords::new(screen_width, screen_height);
-            Self {
+
+            // Build and configure the GRE
+            let mut gre = Gre::new(Player::Us);
+
+            // Replacement effect example:
+            // If something would be destroyed, exile it instead.
+            gre.add_replacement_effect(move |eff| {
+                if let Effect::DestroyTarget { target_filter } = eff {
+                    Some(vec![Effect::ExileTarget { target_filter: target_filter.clone() }])
+                } else {
+                    None
+                }
+            });
+
+            // Continuous effect example:
+            // All damage instances deal +1 extra.
+            gre.add_continuous_effect(|eff| {
+                if let Effect::DamageTarget { damage, .. } = eff {
+                    let new_amount = damage.amount.saturating_add(1);
+                    *damage = Damage { amount: new_amount, special: damage.special.clone() };
+                }
+            });
+
+            // Instantiate Bot
+            let bot = Self {
                 end_game_counter: 0,
                 end_game_threshold: 3,
                 time_game_started: Instant::now(),
@@ -72,7 +109,12 @@ impl Bot {
                 next_state_override: None,
                 last_cast_card_name: String::new(),
                 first_main_phase_done: false,
-            }
+                gre,
+                game_state: GameState::default(),
+                strategy: Box::new(SimpleHeuristic),
+            };
+
+            bot
         }
     }
     /// Draws exactly one card (the rightmost) and OCR‐reads only that card.
@@ -108,18 +150,38 @@ impl Bot {
     }
     pub fn play_land(&mut self) {
         if !self.land_played_this_turn {
-            if let Some((index, card_text)) = self.cards_texts.iter().enumerate()
-                .find(|(_i, text)| LAND_NAMES.iter().any(|&land| text.contains(land)))
+            // find a land in hand via library
+            let library = build_card_library();
+            if let Some((idx, text)) = self.cards_texts.iter().enumerate()
+                .find(|(_, txt)| library.values().any(|c| matches!(c.card_type, CardType::Land) && txt.contains(&c.name)))
             {
-                info!("Found land card '{}' at index {}. Playing it.", card_text, index);
-                Self::play_card(self, index);
-                self.land_number += 1;
-                self.land_count += 1;
+                info!("Playing land '{}' at hand index {}", text, idx);
+                Self::play_card(self, idx);
                 self.land_played_this_turn = true;
+                self.game_state.mana_available += 1;
+                self.game_state.land_played_this_turn = true;
+                // remove from game state hand
+                self.game_state.hand.remove(idx);
             }
         }
         sleep(Duration::from_secs(1));
     }
+
+    pub fn on_spell_resolved(&mut self) {
+        let name = self.last_cast_card_name.clone();
+        let mut targets: Vec<Card> = self.battlefield_creatures.values().cloned().collect();
+        self.gre.trigger_event(GameEvent::SpellResolved(name.clone()), &mut targets, Player::Us);
+        self.gre.resolve_stack();
+    }
+
+    pub fn on_turn_end(&mut self) {
+        let mut all_creatures: Vec<Card> = self.battlefield_creatures.values().cloned().collect();
+        self.gre.trigger_event(GameEvent::TurnEnded, &mut all_creatures, Player::Us);
+        self.gre.resolve_stack();
+        self.land_played_this_turn = false;
+        self.game_state.land_played_this_turn = false;
+    }
+
     /// Cast the first affordable instant, then click on one of our creatures as target.
     pub fn cast_instants_targeting_creature(&mut self, creature_index: usize) {
         // find and cast one instant
@@ -136,49 +198,82 @@ impl Bot {
                 matches!(c.card_type, CardType::Instant(_)) &&
                     Bot::text_contains(&c.name, &self.cards_texts[i])
             }) {
-                if let Some(cost) = self.try_cast_card(i, card) {
-                    self.land_number = self.land_number.saturating_sub(cost);
-                    // now click on our creature as target
-                    let positions = get_own_creature_positions(
-                        self.battlefield_creatures.len(),
-                        self.screen_width as u32,
-                        self.screen_height as u32,
-                    );
-                    if creature_index < positions.len() {
-                        let p = &positions[creature_index];
-                        let click_x = ((p.click_x1 + p.click_x2) / 2) as i32;
-                        let click_y = ((p.click_y1 + p.click_y2) / 2) as i32;
-                        set_cursor_pos(click_x, click_y);
-                        left_click();
-                        info!("Targeted instant at creature #{}", creature_index);
+                match self.try_cast_card(i, card) {
+                    Ok(cost) => {
+                        self.land_number = self.land_number.saturating_sub(cost);
+                        // now click on our creature as target
+                        let positions = get_own_creature_positions(
+                            self.battlefield_creatures.len(),
+                            self.screen_width as u32,
+                            self.screen_height as u32,
+                        );
+                        if creature_index < positions.len() {
+                            let p = &positions[creature_index];
+                            let click_x = ((p.click_x1 + p.click_x2) / 2) as i32;
+                            let click_y = ((p.click_y1 + p.click_y2) / 2) as i32;
+                            set_cursor_pos(click_x, click_y);
+                            left_click();
+                            info!("Targeted instant at creature #{}", creature_index);
+                        }
                     }
+                    Err(e) => warn!("Cannot cast {}: {:?}", card.name, e),
                 }
             }
         }
     }
     /// Megpróbálja kijátszani a paraméterként kapott kártyát, ha elég mana áll rendelkezésre.
     /// Ha sikeres, visszaadja a felhasznált teljes mana mennyiségét.
-    fn try_cast_card(&mut self, pos: usize, card: &Card) -> Option<u32> {
-        let cost = card.mana_cost.clone();
-        let colored_cost = cost.colored();
-        let total_cost = cost.total();
-        if self.land_number >= colored_cost {
-            let leftover = self.land_number - colored_cost;
-            if leftover >= cost.colorless {
-                info!("Casting '{}' with cost: {} colored, {} colorless, total cost: {}", card.name, colored_cost, cost.colorless, total_cost);
-                Self::play_card(self, pos);
-                self.last_cast_card_name = card.name.clone();
-                sleep(Duration::from_secs(3)); //TODO this time should me smaller
-                info!("!!!!!!waited 3 sec");
-                return Some(total_cost);
-            } else {
-                info!("Not enough leftover mana for '{}'. Required {} colorless, leftover {}.", card.name, cost.colorless, leftover);
-            }
-        } else {
-            info!("Not enough colored mana for '{}'. Required: {}, available: {}.", card.name, colored_cost, self.land_number);
+    fn try_cast_card(&mut self, pos: usize, card: &Card) -> Result<u32, AppError> {
+        let cost = &card.mana_cost;
+        let available_colored = self.game_state.mana_available;
+        let available_colorless = self.game_state.mana_available;
+
+        let needed_colored = cost.colored();
+        let needed_colorless = cost.colorless;
+
+        // Ha nincs elég színes mana:
+        if available_colored < needed_colored {
+            info!(
+                "Not enough colored mana for '{}'. Required: {}, available: {}.",
+                card.name, needed_colored, available_colored
+            );
+            return Err(AppError::InsufficientMana {
+                required: cost.total(),
+                colored: needed_colored,
+                colorless: needed_colorless,
+                available_colored,
+                available_colorless,
+            });
         }
-        None
+
+        // Ha nincs elég maradék színtelen manára:
+        let leftover = available_colored - needed_colored;
+        if leftover < needed_colorless {
+            info!(
+                "Not enough leftover mana for '{}'. Required {} colorless, leftover {}.",
+                card.name, needed_colorless, leftover
+            );
+            return Err(AppError::InsufficientMana {
+                required: cost.total(),
+                colored: needed_colored,
+                colorless: needed_colorless,
+                available_colored,
+                available_colorless,
+            });
+        }
+
+        // Visszatért a régi részletes info-log:
+        info!(
+            "Casting '{}' költség: {} színes, {} színtelen (össz: {})",
+            card.name, needed_colored, needed_colorless, cost.total()
+        );
+
+        // sikeres cast
+        Self::play_card(self, pos);
+        self.last_cast_card_name = card.name.clone();
+        Ok(cost.total())
     }
+
 
     /// Generic függvény, amely a kapott predikátum alapján megpróbálja kijátszani a kártyákat.
     /// A `predicate` closure eldönti, hogy az adott kártya megfelel-e a feltételnek (például Instant vagy Creature).
@@ -200,7 +295,7 @@ impl Bot {
                 if let Some(card) = card_library.values().find(|card| Bot::text_contains(&card.name, text)) {
                     // Csak azokat a kártyákat próbáljuk meg kijátszani, amelyek megfelelnek a predicate-nek
                     if predicate(&card.card_type) {
-                        if let Some(cost_used) = self.try_cast_card(i, card) {
+                        if let Ok(cost_used) = self.try_cast_card(i, card) {
                             mana_available = mana_available.saturating_sub(cost_used);
                             // if it's a creature, clone it with summoning_sickness = true
                             if let CardType::Creature(mut cr) = card.card_type.clone() {
@@ -211,6 +306,8 @@ impl Bot {
                             }
                             // always OCR‐refresh opponent side too
                             Bot::update_battlefield_creatures_from_ocr(self);
+                        } else if let Err(e) = self.try_cast_card(i, card) {
+                            warn!("Cannot cast {}: {:?}", card.name, e);
                         }
                     }
                 }
@@ -271,9 +368,15 @@ impl Bot {
                 })
             {
                 // most, hogy nincs élő borrow self‑en, jöhet a mutable borrow
-                if let Some(cost_used) = self.try_cast_card(i, card) {
-                    // sikeres cast: térjünk vissza a névvel és a költséggel
-                    return Some((card.name.clone(), cost_used));
+                match self.try_cast_card(i, card) {
+                    Ok(cost_used) => {
+                        // sikeres cast: név + mana
+                        return Some((card.name.clone(), cost_used));
+                    }
+                    Err(e) => {
+                        warn!("Nem sikerült kirakni {}: {:?}", card.name, e);
+                        // próbálja tovább a következő kártyát
+                    }
                 }
             }
         }
@@ -498,7 +601,6 @@ impl Bot {
         bot.battlefield_opponent_creatures = bot.load_side_creatures(true, opp_count, &library);
     }
 
-
     pub fn examine_cards(&mut self) {
         self.cards_texts.clear(); // Töröljük a korábbi eredményeket.
         for i in 0..self.card_count {
@@ -512,5 +614,12 @@ impl Bot {
             self.cards_texts.push(text);
         }
         info!("OCR results for cards: {:?}", self.cards_texts);
+    }
+}
+
+// Provide a Default impl to allow `..Default::default()` in `new()`
+impl Default for Bot {
+    fn default() -> Self {
+        panic!("Bot::default() is not supported; use Bot::new() instead");
     }
 }

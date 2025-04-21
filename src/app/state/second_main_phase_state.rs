@@ -1,5 +1,7 @@
 // app/state/second_main_phase_state.rs
 
+use crate::app::error::AppError;
+use crate::app::game_state::GamePhase;
 use std::{thread::sleep, time::Duration};
 use tracing::{info};
 
@@ -14,13 +16,13 @@ use crate::app::{
 pub struct SecondMainPhaseState {}
 
 
-impl State for SecondMainPhaseState {
-    fn update(&mut self, bot: &mut Bot) {
+impl State<AppError> for SecondMainPhaseState {
+    fn update(&mut self, bot: &mut Bot) -> Result<(), AppError> {
         info!("SecondMainPhaseState: handling second main phase.");
 
         // 1. Első ellenőrzés: normál feldolgozás
         if !self.initial_check(bot) {
-            return;
+            return Ok(());
         }
 
         // 2. Creature castolási akciók végrehajtása
@@ -28,7 +30,7 @@ impl State for SecondMainPhaseState {
 
         // 3. Új ellenőrzés: ha most már "Opponent's Turn" szerepel a szövegben, kilépünk
         if !self.post_cast_check(bot) {
-            return;
+            return Ok(());
         }
 
         // 4. End Turn folyamat: red button feldolgozással
@@ -36,12 +38,16 @@ impl State for SecondMainPhaseState {
 
         // 5. Állapot reset
         self.reset_state(bot);
+        Ok(())
     }
 
 
-    fn next(&mut self) -> Box<dyn State> {
+    fn next(&mut self) -> Box<dyn State<AppError>> {
         info!("SecondMainPhaseState: transitioning to new round (StartState).");
         Box::new(OpponentsTurnState::new())
+    }
+    fn phase(&self) -> GamePhase {
+        GamePhase::PostCombatMain
     }
 }
 

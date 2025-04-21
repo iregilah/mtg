@@ -1,5 +1,7 @@
 // app/state/mulligan_state.rs
 
+use crate::app::error::AppError;
+use crate::app::game_state::GamePhase;
 use std::{thread::sleep, time::Duration};
 use tracing::{warn, info};
 
@@ -18,8 +20,8 @@ impl MulliganState {
     }
 }
 
-impl State for MulliganState {
-    fn update(&mut self, bot: &mut Bot) {
+impl State<AppError> for MulliganState {
+    fn update(&mut self, bot: &mut Bot) -> Result<(), AppError> {
         info!("MulliganState: starting mulligan phase.");
         bot.time_waiting_started = std::time::Instant::now();
         info!("Waiting for Mulligan state... (Mulligan logic)");
@@ -28,11 +30,16 @@ impl State for MulliganState {
         sleep(Duration::from_secs(1));
         Self::wait_for_next_for_hover(self, bot);
         Self::move_cursor_and_examine_cards(self, bot);
+
+        Ok(())
     }
 
-    fn next(&mut self) -> Box<dyn State> {
+    fn next(&mut self) -> Box<dyn State<AppError>> {
         info!("MulliganState: transitioning to FirstMainPhaseState.");
         Box::new(FirstMainPhaseState::new())
+    }
+    fn phase(&self) -> GamePhase {
+        GamePhase::Beginning
     }
 }
 

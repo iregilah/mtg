@@ -1,5 +1,7 @@
 // app/state/opponents_turn_state.rs
 
+use crate::app::error::AppError;
+use crate::app::game_state::GamePhase;
 use std::{thread::sleep, time::Duration};
 use tracing::{info};
 
@@ -18,8 +20,8 @@ impl OpponentsTurnState {
     }
 }
 
-impl State for OpponentsTurnState {
-    fn update(&mut self, bot: &mut Bot) {
+impl State<AppError> for OpponentsTurnState {
+    fn update(&mut self, bot: &mut Bot) -> Result<(), AppError> {
         bot.land_played_this_turn = false;
         info!("OpponentsTurnState: handling opponent's turn.");
         Self::process_opponents_turn(self, bot);
@@ -29,11 +31,15 @@ impl State for OpponentsTurnState {
 
         info!("Opponent turn complete, will draw next turn.");
         sleep(Duration::from_secs(1));
+        Ok(())
     }
 
-    fn next(&mut self) -> Box<dyn State> {
+    fn next(&mut self) -> Box<dyn State<AppError>> {
         info!("OpponentsTurnState: transitioning to FirstMainPhaseState.");
         Box::new(FirstMainPhaseState::new())
+    }
+    fn phase(&self) -> GamePhase {
+        GamePhase::End
     }
 }
 

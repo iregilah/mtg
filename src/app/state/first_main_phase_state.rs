@@ -1,6 +1,9 @@
 // app/state/first_main_phase_state.rs
 
 //use std::{thread::sleep, time::Duration};
+use crate::app::error::AppError;
+use tracing::warn;
+use crate::app::game_state::GamePhase;
 use tracing::{info};
 
 use crate::app::{
@@ -17,8 +20,8 @@ pub struct FirstMainPhaseState {
     skip_to_opponent: bool,
 }
 
-impl State for FirstMainPhaseState {
-    fn update(&mut self, bot: &mut Bot) {
+impl State<AppError> for FirstMainPhaseState {
+    fn update(&mut self, bot: &mut Bot) -> Result<(), AppError> {
         info!("FirstMainPhaseState: handling first main phase.");
 
         self.refresh_battlefield_if_needed(bot);
@@ -27,9 +30,15 @@ impl State for FirstMainPhaseState {
         self.cast_main_phase_creatures(bot);
         self.cast_other_spells(bot);
         self.decide_attack_or_skip(bot);
+
+        if bot.land_played_this_turn && bot.game_state.mana_available == 0 {
+            warn!("Már játszottunk land-et de nincs elérhető mana!");
+        }
+
+        Ok(())
     }
 
-    fn next(&mut self) -> Box<dyn State> {
+    fn next(&mut self) -> Box<dyn State<AppError>> {
         if self.skip_to_opponent {
             info!("Skipping AttackPhase -> OpponentsTurnState.");
             Box::new(OpponentsTurnState::new())
@@ -37,6 +46,10 @@ impl State for FirstMainPhaseState {
             info!("Proceeding to AttackPhaseState.");
             Box::new(AttackPhaseState::new())
         }
+    }
+
+    fn phase(&self) -> GamePhase {
+        GamePhase::PreCombatMain
     }
 }
 

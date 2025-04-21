@@ -1,5 +1,7 @@
 // app/state/submit_state.rs
 
+use crate::app::error::AppError;
+use crate::app::game_state::GamePhase;
 use std::{thread::sleep, time::Duration};
 use tracing::{info, warn};
 
@@ -17,8 +19,8 @@ impl SubmitState {
     }
 }
 
-impl State for SubmitState {
-    fn update(&mut self, bot: &mut Bot) {
+impl State<AppError> for SubmitState {
+    fn update(&mut self, bot: &mut Bot) -> Result<(), AppError> {
         info!("SubmitState: handling submit phase (Submit 0).");
         let positions = get_card_positions(bot.card_count, bot.screen_width as u32);
         if bot.card_count >= 4 {
@@ -31,11 +33,15 @@ impl State for SubmitState {
             warn!("Not enough cards for Submit 0 action.");
         }
         sleep(Duration::from_secs(1));
+        Ok(())
     }
 
-    fn next(&mut self) -> Box<dyn State> {
+    fn next(&mut self) -> Box<dyn State<AppError>> {
         info!("SubmitState: transitioning to FirstMainPhaseState.");
         // Miután submitoltunk, visszalépünk az első main phase-be
         Box::new(FirstMainPhaseState::new())
+    }
+    fn phase(&self) -> GamePhase {
+        GamePhase::PreCombatMain
     }
 }

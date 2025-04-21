@@ -19,6 +19,7 @@ fn main() {
     if args.len() > 1 {
         info!("RightClick to get coordinates. LeftClick for exit (Not implemented in Rust version).");
     } else {
-        App::start();
+        let mut app = App::new();
+        app.start();
     }
 }
