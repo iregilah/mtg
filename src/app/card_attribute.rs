@@ -4,7 +4,7 @@ use crate::app::game_state::GamePhase;
 use tracing::{debug, info, warn};
 
 /// Everything an attribute can do when it fires.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
     SelfAttributeChange(AttributeChange),
     DamageTarget { damage: Damage, target_filter: TargetFilter },
@@ -31,7 +31,7 @@ pub enum Effect {
 }
 
 /// Ways to proliferate counters
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CounterType {
     PlusOnePlusOne,
     Loyalty,
@@ -54,6 +54,11 @@ pub struct AttributeChange {
     pub power: i32,
     pub toughness: i32,
 }
+impl PartialEq for AttributeChange {
+    fn eq(&self, other: &Self) -> bool {
+        self.power == other.power && self.toughness == other.toughness
+    }
+}
 
 /// A damage instance.
 #[derive(Debug, Clone)]
@@ -62,20 +67,26 @@ pub struct Damage {
     pub special: Option<String>,
 }
 
+impl PartialEq for Damage {
+    fn eq(&self, other: &Self) -> bool {
+        self.amount == other.amount && self.special == other.special
+    }
+}
+
 /// Filters for targets (placeholder implementation).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TargetFilter {
     pub filter: u8,
 }
 
 /// A token to spawn.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub name: String,
 }
 
 /// An enchantment/Aura to attach.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Enchantment {
     pub name: String,
 }

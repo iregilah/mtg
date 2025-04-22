@@ -5,11 +5,13 @@ use std::collections::HashMap;
 use crate::app::card_attribute::*;
 use crate::app::card_attribute::CardAttribute;
 use tracing::{error, info, warn};
+use std::cmp::PartialEq;
 
 #[derive(Debug, Clone)]
+#[derive(PartialEq)]
 pub enum CardType { Creature(Creature), Instant(Instant_), Enchantment(Enchantment_), Land }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Creature {
     pub name: String,
     pub summoning_sickness: bool,
@@ -17,17 +19,17 @@ pub struct Creature {
     pub toughness: i32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Instant_ {
     pub name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Enchantment_ {
     pub name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ManaCost {
     pub colorless: u32,
     pub red: u32,
@@ -50,6 +52,15 @@ pub struct Card {
     pub attributes: Vec<Box<dyn CardAttribute>>,
     pub triggers: Vec<Trigger>,
 }
+
+impl PartialEq for Card {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare the relevant fields of `Card` to determine equality
+        self.name == other.name && self.card_type == other.card_type && self.mana_cost == other.mana_cost
+    }
+}
+
+impl Eq for Card {}
 
 // kézzel implementáljuk, hogy ne kelljen Debug a CardAttribute-okra is
 impl std::fmt::Debug for Card {
