@@ -130,16 +130,16 @@ pub struct ModifyAttackDefense {
 }
 
 impl CardAttribute for ModifyAttackDefense {
-    fn on_trigger(&mut self, _trigger: &Trigger) -> Option<Effect> {
+    fn on_trigger(&mut self, _: &Trigger) -> Option<Effect> {
         Some(Effect::SelfAttributeChange(AttributeChange { power: self.power, toughness: self.toughness }))
     }
 }
 
 // --- Proliferate on combat damage ---
 #[derive(Clone)]
-pub struct PoliferateOnDamage;
+pub struct Poliferate;
 
-impl CardAttribute for PoliferateOnDamage {
+impl CardAttribute for Poliferate {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
         if *trigger == Trigger::OnCombatDamage {
             Some(Effect::Poliferate { counter_type: CounterType::PlusOnePlusOne })

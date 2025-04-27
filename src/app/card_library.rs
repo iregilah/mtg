@@ -6,10 +6,10 @@ use crate::app::card_attribute::*;
 use crate::app::card_attribute::CardAttribute;
 use tracing::{error, info, warn};
 use std::cmp::PartialEq;
-
+const CACOPHONY_SCAMP: &str = "Cacophony Scamp";
 #[derive(Debug, Clone)]
 #[derive(PartialEq)]
-pub enum CardType { Creature(Creature), Instant(Instant_), Enchantment(Enchantment_), Land }
+pub enum CardType { Creature(Creature), Instant(Instant_), Enchantment(Enchantment), Land }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Creature {
@@ -25,7 +25,7 @@ pub struct Instant_ {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Enchantment_ {
+pub struct Enchantment {
     pub name: String,
 }
 
@@ -98,7 +98,7 @@ impl Card {
         self.attributes.iter_mut().filter_map(|a| a.on_trigger(trigger)).collect()
     }
 }
-
+//
 pub fn build_card_library() -> HashMap<String, Card> {
     let mut lib = HashMap::new();
 
@@ -156,24 +156,25 @@ pub fn build_card_library() -> HashMap<String, Card> {
     // Monster Role token itself:
     lib.insert("Monster Role".into(), Card {
         name: "Monster Role".into(),
-        card_type: CardType::Enchantment(Enchantment_ { name: "Monster Role".into() }),
+        card_type: CardType::Enchantment(Enchantment { name: "Monster Role".into() }),
         mana_cost: ManaCost { colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0 },
         attributes: vec![ Box::new(MonsterRoleBuff) ],
         triggers: vec![], // no discrete triggers
     });
 
+    //TODO öszsesre megcsinálni
     // Cacophony Scamp
-    lib.insert("Cacophony Scamp".into(), Card {
-        name: "Cacophony Scamp".into(),
+    lib.insert(CACOPHONY_SCAMP.into(), Card {
+        name: CACOPHONY_SCAMP.into(),
         card_type: CardType::Creature(Creature {
-            name: "Cacophony Scamp".into(),
+            name: CACOPHONY_SCAMP.into(),
             summoning_sickness: true,
             power: 1,
             toughness: 1,
         }),
         mana_cost: ManaCost { colorless: 0, red: 1, blue: 0, green: 0, black: 0, white: 0 },
         attributes: vec![
-            Box::new(PoliferateOnDamage),
+            Box::new(Poliferate),
             Box::new(SpawnTokenOnDeath),
             Box::new(DamageEqualPowerOnDeath {
                 damage: Damage { amount: 1, special: None },
@@ -247,7 +248,7 @@ pub fn build_card_library() -> HashMap<String, Card> {
     // Demonic Ruckus
     lib.insert("Demonic Ruckus".into(), Card {
         name: "Demonic Ruckus".into(),
-        card_type: CardType::Enchantment(Enchantment_ { name: "Demonic Ruckus".into() }),
+        card_type: CardType::Enchantment(Enchantment { name: "Demonic Ruckus".into() }),
         mana_cost: ManaCost { colorless: 1, red: 1, blue: 0, green: 0, black: 0, white: 0 },
         attributes: vec![
             Box::new(EnchantCreatureBuff {
