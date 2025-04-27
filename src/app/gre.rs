@@ -1,17 +1,21 @@
-use std::collections::{BinaryHeap, VecDeque, HashSet};
-use crate::app::game_state::{GameEvent, GamePhase};
+use std::collections::{BinaryHeap, HashSet};
+use crate::app::game_state::{GameEvent, GamePhase, Player};
 use crate::app::card_attribute::{Effect, Trigger};
 use crate::app::card_library::Card;
 use tracing::info;
-use crate::app::game_state::Player;
-
 
 /// Wrapper for prioritized stack entries, supports custom ordering.
 #[derive(Debug, Clone, Eq)]
 pub struct PriorityEntry {
-    priority: u8,
-    sequence: usize,
-    entry: StackEntry,
+    pub priority: u8,
+    pub sequence: usize,
+    pub entry: StackEntry,
+}
+
+impl PriorityEntry {
+    pub fn entry(&self) -> &StackEntry {
+        &self.entry
+    }
 }
 
 impl Ord for PriorityEntry {
@@ -33,16 +37,16 @@ impl PartialEq for PriorityEntry {
         self.priority == other.priority && self.sequence == other.sequence
     }
 }
-impl Eq for StackEntry {}
+
 /// An entry on the stack: spells, triggered or activated abilities.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StackEntry {
     Spell { card: Card, controller: Player },
     TriggeredAbility { source: Option<Card>, effect: Effect, controller: Player },
     ActivatedAbility { source: Card, effect: Effect, controller: Player },
 }
 
-/// A delayed effect scheduled for a future phase
+/// A delayed effect scheduled for a future phase.
 #[derive(Debug, Clone)]
 pub struct DelayedEffect {
     pub effect: Effect,
@@ -51,6 +55,13 @@ pub struct DelayedEffect {
     pub depends_on: Vec<usize>,
 }
 
+/// A replacement effect with priority.
+struct ReplacementEffect {
+    priority: u8,
+    f: Box<dyn Fn(&Effect) -> Option<Vec<Effect>>>,
+}
+
+/// Game Rules Engine managing stack, replacement and continuous effects.
 pub struct Gre {
     /// Priority queue for stack entries.
     pub stack: BinaryHeap<PriorityEntry>,
@@ -66,8 +77,8 @@ pub struct Gre {
     pub priority: Player,
     /// How many consecutive passes have occurred.
     pub passes: u8,
-    /// Replacement effects.
-    pub replacement_effects: Vec<Box<dyn Fn(&Effect) -> Option<Vec<Effect>>>>,
+    /// Replacement effects, sorted by priority descending.
+    replacement_effects: Vec<ReplacementEffect>,
     /// Continuous effects.
     pub continuous_effects: Vec<Box<dyn Fn(&mut Effect)>>,
 }
@@ -120,12 +131,8 @@ impl Gre {
             })
             .collect();
         // Those not ready remain
-        for d in ready.iter().chain(self.delayed.iter()) {
-            if d.execute_phase != current_phase
-                || !d.depends_on.iter().all(|dep| self.executed_delayed.contains(dep))
-            {
-                still.push(d.clone());
-            }
+        for d in self.delayed.drain(..) {
+            still.push(d);
         }
         self.delayed = still;
         // Queue ready effects in creation order
@@ -144,10 +151,10 @@ impl Gre {
         for card in battlefield.iter_mut() {
             let effects = match &event {
                 GameEvent::SpellResolved(name) => card.trigger_by(&Trigger::Custom(format!("OnCastResolved:{}", name))),
-                GameEvent::CreatureDied(_)    => card.trigger_by(&Trigger::OnDeath),
-                GameEvent::TurnEnded          => card.trigger_by(&Trigger::EndOfTurn),
-                GameEvent::Custom(s)          => card.trigger_by(&Trigger::Custom(s.clone())),
-                GameEvent::PhaseChange(p)     => card.trigger_by(&Trigger::Custom(format!("PhaseChange:{:?}", p))),
+                GameEvent::CreatureDied(_) => card.trigger_by(&Trigger::OnDeath),
+                GameEvent::TurnEnded => card.trigger_by(&Trigger::EndOfTurn),
+                GameEvent::Custom(s) => card.trigger_by(&Trigger::Custom(s.clone())),
+                GameEvent::PhaseChange(p) => card.trigger_by(&Trigger::Custom(format!("PhaseChange:{:?}", p))),
             };
             for eff in effects {
                 batch.push((card.clone(), eff));
@@ -155,14 +162,14 @@ impl Gre {
         }
         self.reset_priority();
         for (source, eff) in batch {
-            match &eff {
-                Effect::Delayed{ effect, phase, deps } => {
-                    let id = self.schedule_delayed(*effect.clone(), *phase, deps.clone());
+            match eff {
+                Effect::Delayed { effect, phase, deps } => {
+                    let id = self.schedule_delayed(*effect.clone(), phase, deps.clone());
                     info!("Scheduled delayed effect id {} from trigger", id);
                 }
-                _ => {
+                eff => {
                     let prio = match eff {
-                        Effect::SelfAttributeChange(_) | Effect::Poliferate {..} => 2,
+                        Effect::SelfAttributeChange(_) | Effect::Poliferate { .. } => 2,
                         _ => 1,
                     };
                     self.push(StackEntry::TriggeredAbility { source: Some(source), effect: eff, controller }, prio);
@@ -183,9 +190,68 @@ impl Gre {
         }
     }
 
-    /// Reset consecutive pass count without changing priority.
-    fn reset_priority(&mut self) {
-        self.passes = 0;
+    /// Register a replacement effect with priority.
+    /// Higher priority replacers run first and can override lower-priority ones.
+    pub fn add_replacement_effect<F>(&mut self, priority: u8, f: F)
+    where
+        F: 'static + Fn(&Effect) -> Option<Vec<Effect>>,
+    {
+        self.replacement_effects.push(ReplacementEffect { priority, f: Box::new(f) });
+        // Keep highest priority first
+        self.replacement_effects.sort_by(|a, b| b.priority.cmp(&a.priority));
+    }
+
+    /// Register a continuous effect (e.g., damage modification).
+    pub fn add_continuous_effect<F>(&mut self, effect: F)
+    where
+        F: 'static + Fn(&mut Effect),
+    {
+        self.continuous_effects.push(Box::new(effect));
+    }
+
+    /// Handle an effect: apply replacement chaining, continuous effects, then execute.
+    pub fn handle_effect(&mut self, effect: Effect) {
+        // 1) Replacement chaining
+        let replaced = if self.replacement_effects.is_empty() {
+            vec![effect]
+        } else {
+            self.apply_replacement(&effect, 0)
+        };
+        // 2) Continuous modifications
+        let mut final_effects = Vec::new();
+        for mut e in replaced {
+            for cont in &self.continuous_effects {
+                cont(&mut e);
+            }
+            final_effects.push(e);
+        }
+        // 3) Execute each
+        for e in final_effects {
+            self.execute(e);
+        }
+    }
+
+    /// Recursively apply replacement effects in priority order.
+    fn apply_replacement(&self, effect: &Effect, idx: usize) -> Vec<Effect> {
+        if idx >= self.replacement_effects.len() {
+            return vec![effect.clone()];
+        }
+        let replacer = &self.replacement_effects[idx];
+        if let Some(repls) = (replacer.f)(effect) {
+            // If replacer matches, it overrides effect: apply remaining replacers to each replacement
+            repls.into_iter()
+                .flat_map(|eff| self.apply_replacement(&eff, idx + 1))
+                .collect()
+        } else {
+            // No replacement at this priority: try next
+            self.apply_replacement(effect, idx + 1)
+        }
+    }
+
+    /// Execute or queue an effect immediately (for delayed dispatch).
+    pub fn execute(&self, effect: Effect) {
+        info!("Executing effect: {:?}", effect);
+        // TODO: Concrete state mutation logic
     }
 
     /// Resolve all entries on the stack respecting priority.
@@ -198,43 +264,17 @@ impl Gre {
                     let mut battlefield = Vec::new();
                     self.trigger_event(GameEvent::SpellResolved(card.name.clone()), &mut battlefield, controller);
                 }
-                StackEntry::TriggeredAbility { source: _, effect, controller: _ }
-                | StackEntry::ActivatedAbility { source: _, effect, controller: _ } => {
+                StackEntry::TriggeredAbility { effect, .. }
+                | StackEntry::ActivatedAbility { effect, .. } => {
                     self.handle_effect(effect);
                 }
             }
         }
     }
 
-    /// Handle an effect: apply replacement, continuous modifications, then execute.
-    pub fn handle_effect(&mut self, effect: Effect) {
-        let mut to_exec = if let Some(repl) = self.replacement_effects.iter().find_map(|r| r(&effect)) {
-            repl
-        } else {
-            vec![effect]
-        };
-        for cont in &self.continuous_effects {
-            for e in &mut to_exec { cont(e); }
-        }
-        for e in to_exec { self.execute(e); }
-    }
-
-    /// Register a replacement effect (e.g., replace destroy with exile).
-    pub fn add_replacement_effect<F>(&mut self, effect: F)
-    where F: 'static + Fn(&Effect) -> Option<Vec<Effect>> {
-        self.replacement_effects.push(Box::new(effect));
-    }
-
-    /// Register a continuous effect (e.g., damage modification).
-    pub fn add_continuous_effect<F>(&mut self, effect: F)
-    where F: 'static + Fn(&mut Effect) {
-        self.continuous_effects.push(Box::new(effect));
-    }
-
-    /// Execute or queue an effect immediately (for delayed dispatch).
-    pub fn execute(&self, effect: Effect) {
-        info!("Executing effect: {:?}", effect);
-        // TODO: Concrete state mutation logic
+    /// Reset consecutive pass count without changing priority.
+    fn reset_priority(&mut self) {
+        self.passes = 0;
     }
 
     /// Push a new entry onto the stack with given priority.
@@ -250,4 +290,16 @@ impl Gre {
         self.push(entry, prio);
         self.reset_priority();
     }
+    /// Resolve just the top entry of the stack.
+    pub fn resolve_top_of_stack(&mut self) {
+        if let Some(pe) = self.stack.pop() {
+            // handle pe.entry similarly to resolve_stack
+            match pe.entry {
+                StackEntry::Spell { .. } | StackEntry::TriggeredAbility { .. } | StackEntry::ActivatedAbility { .. } => {
+                    // For now, just drop it
+                }
+            }
+        }
+    }
+
 }

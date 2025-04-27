@@ -3,31 +3,36 @@
 use tracing::{debug, error, info};
 
 use std::{
-    ffi::OsStr,
-    os::windows::ffi::OsStrExt,
-    ptr::null_mut,
     thread::sleep,
     time::Duration,
 };
 
-use screenshot::get_screenshot;
+use screenshots::Screen;
+use image::DynamicImage;
 
 use image::{ImageBuffer, Rgba};
 
-use winapi::{
-    shared::windef::HWND,
-    um::{
-        wingdi::GetPixel,
-        winuser::{
-            FindWindowW, GetDC, ReleaseDC, SetCursorPos,
-            mouse_event, keybd_event,
-            MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-            KEYEVENTF_KEYUP,
-        },
-    },
+use chrono::Local;
+use crate::multi_platform::{click_left, get_pixel, move_cursor, send_key, windows_platform};
+#[cfg(target_os = "linux")]
+use crate::multi_platform::x11_platform;
+#[cfg(all(target_os = "linux", not(feature = "x11")))]
+use crate::multi_platform::wayland_platform;
+
+#[cfg(target_os = "windows")]
+use {
+    std::ffi::OsStr,
+    std::os::windows::ffi::OsStrExt,
+    windows::core::PCWSTR,
+    windows::Win32::Foundation::HWND,
+    windows::Win32::UI::WindowsAndMessaging::FindWindowW,
 };
 
-use chrono::Local;
+#[cfg(not(target_os = "windows"))]
+use {
+    x11::xlib,
+    std::{ffi::CStr, ptr, slice},
+};
 
 /// Represents an RGB color.
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -37,17 +42,13 @@ pub struct Color {
     pub b: u8,
 }
 
-
 /// Retrieves the color of the pixel at (x, y).
-pub fn win32_get_color(x: i32, y: i32) -> Color {
-    unsafe {
-        let hdc = GetDC(null_mut());
-        let pixel = GetPixel(hdc, x, y);
-        ReleaseDC(null_mut(), hdc);
-        Color {
-            r: (pixel & 0x0000FF) as u8,
-            g: ((pixel & 0x00FF00) >> 8) as u8,
-            b: ((pixel & 0xFF0000) >> 16) as u8,
+pub fn get_color(x: i32, y: i32) -> Color {
+    match get_pixel(x, y) {
+        Ok((r, g, b)) => Color { r, g, b },
+        Err(e) => {
+            error!("get_color error: {}", e);
+            Color { r: 0, g: 0, b: 0 }
         }
     }
 }
@@ -61,7 +62,7 @@ pub fn get_average_color(x: i32, y: i32, width: i32, height: i32) -> (u8, u8, u8
     let mut count = 0;
     for i in 0..width {
         for j in 0..height {
-            let col = win32_get_color(x + i, y + j);
+            let col = get_color(x + i, y + j);
             // Debug log minden egyes pixelért (ez info vagy debug szintű lehet, ha túl sok)
             debug!("Pixel at ({}, {}) has color: {:?}", x + i, y + j, col);
             r_total += col.r as u32;
@@ -117,42 +118,45 @@ pub fn is_color_within_tolerance(color: (u8, u8, u8), target: (u8, u8, u8), tol:
     result
 }
 
-/// Moves the cursor to (x, y) and waits for the OS to catch up.
+/// Moves the cursor to (x, y).
 pub fn set_cursor_pos(x: i32, y: i32) {
-    unsafe { SetCursorPos(x, y); }
+    if let Err(e) = move_cursor(x, y) {
+        error!("set_cursor_pos error: {}", e);
+    }
     sleep(Duration::from_millis(100));
 }
 
 /// Simulates a left mouse click.
 pub fn left_click() {
-    unsafe {
-        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
-        sleep(Duration::from_millis(50));
-        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+    if let Err(e) = click_left() {
+        error!("left_click error: {}", e);
     }
     sleep(Duration::from_millis(100));
 }
 
-/// Simulates a key press for the given virtual-key code.
-pub fn press_key(vk: u16) {
-    unsafe {
-        keybd_event(vk as u8, 0, 0, 0);
-        sleep(Duration::from_millis(50));
-        keybd_event(vk as u8, 0, KEYEVENTF_KEYUP, 0);
+/// Simulates a key press + release.
+pub fn press_key(keycode: u32) {
+    if let Err(e) = send_key(keycode) {
+        error!("press_key error: {}", e);
     }
     sleep(Duration::from_millis(100));
 }
 
 /// Takes a screenshot of the primary monitor and saves it with a timestamp.
 pub fn make_screenshot() {
-    if let Ok(scn) = get_screenshot(0) {
-        let width = scn.width() as u32;
-        let height = scn.height() as u32;
-        let data = unsafe { std::slice::from_raw_parts(scn.raw_data(), scn.raw_len()).to_vec() };
-        if let Some(buffer) = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, data) {
-            let now = Local::now();
-            let filename = format!("screenshot_{}.png", now.format("%Y-%m-%d_%H-%M"));
-            let _ = buffer.save(&filename);
+    if let Ok(screens) = Screen::all() {
+        if let Some(screen) = screens.first() {
+            if let Ok(buffer) = screen.capture() {
+                let now = Local::now();
+                let filename = format!("screenshot_{}.png", now.format("%Y-%m-%d_%H-%M"));
+                let (w, h) = (buffer.width(), buffer.height());
+                if let Some(img_buf) = ImageBuffer::<Rgba<u8>, _>::from_raw(w, h, buffer.into_raw()) {
+                    let img = DynamicImage::ImageRgba8(img_buf);
+                    let _ = img.save(&filename);
+                } else {
+                    error!("make_screenshot: buffer size mismatch");
+                }
+            }
         }
     }
 }
@@ -166,6 +170,7 @@ pub struct Cords {
 }
 
 impl Cords {
+    /// Initialize UI coordinates based on screen size.
     pub fn new(screen_width: i32, screen_height: i32) -> Self {
         Self {
             home_button: (
@@ -184,26 +189,10 @@ impl Cords {
     }
 }
 
-/// Finds a window by its title.
-pub fn find_window(title: &str) -> Option<HWND> {
-    use std::iter::once;
-    let wide: Vec<u16> = OsStr::new(title)
-        .encode_wide()
-        .chain(once(0))
-        .collect();
-    unsafe {
-        let hwnd = FindWindowW(null_mut(), wide.as_ptr());
-        if hwnd.is_null() {
-            None
-        } else {
-            Some(hwnd)
-        }
-    }
-}
 
 /// Returns "red", "blue" or "black" based on the attack button color.
 pub fn check_button_color(cords: &Cords) -> &'static str {
-    let color = win32_get_color(cords.attack_button.0, cords.attack_button.1);
+    let color = get_color(cords.attack_button.0, cords.attack_button.1);
     if color.r > 200 {
         "red"
     } else if color.b > 200 {
@@ -212,3 +201,129 @@ pub fn check_button_color(cords: &Cords) -> &'static str {
         "black"
     }
 }
+
+/// Finds a window by its title.
+///
+/// On Windows uses the `windows` crate; on Linux/X11 (and XWayland)
+/// it enumerates X11 children and matches by window name.
+#[cfg(target_os = "windows")]
+pub fn find_window(title: &str) -> Option<HWND> {
+    // Build a null-terminated UTF-16 string
+    let wide: Vec<u16> = OsStr::new(title)
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let pw = PCWSTR(wide.as_ptr());
+
+    // Most már Result<HWND, Error>
+    let res = unsafe { FindWindowW(None, pw) };
+    match res {
+               Ok(hwnd) if !hwnd.0.is_null() => Some(hwnd),  // megtaláltuk, és nem null pointer
+        Ok(_) | Err(_)          => None,         // hiba vagy null handle
+    }
+}
+#[cfg(not(target_os = "windows"))]
+pub fn find_window(title: &str) -> Option<()> {
+    unsafe {
+        // Connect to the X server
+        let display = xlib::XOpenDisplay(ptr::null());
+        if display.is_null() {
+            return None;
+        }
+        let root = xlib::XDefaultRootWindow(display);
+
+        // Query the window tree
+        let mut root_ret = 0;
+        let mut parent_ret = 0;
+        let mut children_ptr: *mut xlib::Window = ptr::null_mut();
+        let mut nchildren: u32 = 0;
+        if xlib::XQueryTree(
+            display,
+            root,
+            &mut root_ret,
+            &mut parent_ret,
+            &mut children_ptr,
+            &mut nchildren,
+        ) == 0 {
+            xlib::XCloseDisplay(display);
+            return None;
+        }
+
+        let children = slice::from_raw_parts(children_ptr, nchildren as usize);
+        for &w in children {
+            let mut name_ptr: *mut i8 = ptr::null_mut();
+            if xlib::XFetchName(display, w, &mut name_ptr) != 0 && !name_ptr.is_null() {
+                let name = CStr::from_ptr(name_ptr).to_string_lossy();
+                xlib::XFree(name_ptr as *mut _);
+                if name.contains(title) {
+                    xlib::XCloseDisplay(display);
+                    return Some(());
+                }
+            }
+        }
+
+        xlib::XCloseDisplay(display);
+        None
+    }
+}
+
+/*
+/// Finds a window by its title (Windows only).
+#[cfg(target_os = "windows")]
+pub fn find_window(title: &str) -> Option<winapi::shared::windef::HWND> {
+    platform::find_window(title)
+}
+*/
+
+/*
+/// Stub for non-Windows platforms.
+// csak Linux-on (X11 / XWayland)
+#[cfg(not(target_os = "windows"))]
+pub fn find_window(title: &str) -> Option<()> {
+    use x11::xlib;
+    use std::{ffi::CStr, ptr, slice};
+    unsafe {
+        // Kapcsolódás az X szerverhez (DISPLAY env alapján)
+        let display = xlib::XOpenDisplay(ptr::null());
+        if display.is_null() {
+            return None;
+        }
+        let root = xlib::XDefaultRootWindow(display);
+
+        // Lekérdezzük a gyerekablakokat
+        let mut root_ret = 0;
+        let mut parent_ret = 0;
+        let mut children_ptr: *mut xlib::Window = ptr::null_mut();
+        let mut nchildren = 0;
+        if xlib::XQueryTree(
+            display,
+            root,
+            &mut root_ret,
+            &mut parent_ret,
+            &mut children_ptr,
+            &mut nchildren,
+        ) == 0
+        {
+            xlib::XCloseDisplay(display);
+            return None;
+        }
+
+        // Végigmegyünk az ablakokon
+        let children = slice::from_raw_parts(children_ptr, nchildren as usize);
+        for &w in children.iter() {
+            let mut name_ptr: *mut i8 = ptr::null_mut();
+            if xlib::XFetchName(display, w, &mut name_ptr) != 0 && !name_ptr.is_null() {
+                let name = CStr::from_ptr(name_ptr).to_string_lossy();
+                xlib::XFree(name_ptr as *mut _);
+                if name.contains(title) {
+                    xlib::XCloseDisplay(display);
+                    return Some(());
+                }
+            }
+        }
+
+        xlib::XCloseDisplay(display);
+        None
+    }
+}
+*/

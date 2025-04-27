@@ -37,9 +37,10 @@ impl State<AppError> for AttackPhaseState {
     }
 
     fn next(&mut self) -> Box<dyn State<AppError>> {
-        info!("AttackPhaseState: transitioning to SecondMainPhaseState.");
-        Box::new(SecondMainPhaseState::new())
+        info!("AttackPhaseState: transitioning to CombatDamageState.");
+        Box::new(crate::app::state::combat_damage_state::CombatDamageState::new())
     }
+
     fn phase(&self) -> GamePhase {
         GamePhase::Combat
     }
@@ -47,12 +48,6 @@ impl State<AppError> for AttackPhaseState {
 
 impl AttackPhaseState {
     fn is_attackers_text(s: &str) -> bool {
-        // A regex, ami egyezik a következővel:
-        // - opcionális szóközök elején,
-        // - majd egy vagy több számjegy (\d+),
-        // - utána legalább egy szóköz (\s+),
-        // - majd az "Attacker" szó, ahol az "s" opcionális ("Attackers?" az "s" kérdőjellel opcionális),
-        // - végül opcionális szóközök, és a szöveg vége.
         let re = Regex::new(r"^\s*\d+\s+Attackers?\s*$").unwrap();
         let result = re.is_match(s);
         info!("is_attackers_text(): input = {:?}, matches regex: {}", s, result);
@@ -60,50 +55,82 @@ impl AttackPhaseState {
     }
 
     fn can_attack(bot: &Bot) -> bool {
-        bot.battlefield_creatures.iter().any(|(_name, card)| {
-            if let crate::app::card_library::CardType::Creature(creature) = &card.card_type {
-                !creature.summoning_sickness
+        bot.battlefield_creatures.values().any(|card| {
+            if let crate::app::card_library::CardType::Creature(cr) = &card.card_type {
+                !cr.summoning_sickness
             } else {
                 false
             }
         })
     }
+
     pub fn process_attack_phase(&self, bot: &mut Bot) {
-        // 1. Ciklus: addig várunk, amíg a main region text "All Attack"-et ad,
-        //    itt mindig a red button (white_invert_image) feldolgozását használjuk.
+        // 1) Wait for "All Attack" on red button
         loop {
-            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, true);
-            info!("(Attack phase) Main region text: {}", main_text);
+            let main_text = check_main_region_text(
+                bot.screen_width as u32,
+                bot.screen_height as u32,
+                true,
+            );
+            info!("(Attack phase - red) Main region text: {}", main_text);
+
             if main_text.contains("All Attack") {
-                press_key(winapi::um::winuser::VK_SPACE as u16);
+                // record which creatures will attack
+                bot.attacking = bot
+                    .battlefield_creatures
+                    .iter()
+                    .filter_map(|(name, card)| {
+                        if let crate::app::card_library::CardType::Creature(cr) = &card.card_type {
+                            if !cr.summoning_sickness {
+                                return Some(name.clone());
+                            }
+                        }
+                        None
+                    })
+                    .collect();
+                info!("Attacking creatures: {:?}", bot.attacking);
+
+                press_key(0x20); // Space
                 sleep(Duration::from_secs(1));
                 break;
-            } else if main_text.contains("Next") {
-                press_key(winapi::um::winuser::VK_SPACE as u16);
+            }
+            if main_text.contains("Next") {
+                press_key(0x20);
                 sleep(Duration::from_secs(1));
             } else {
                 sleep(Duration::from_secs(2));
             }
         }
 
-        // 2. Ciklus: várjuk, hogy a main region text "X Attackers" formátumú legyen.
+        // 2) Wait for "X Attackers" on white button
         loop {
-            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, true);
-            info!("(Attack phase) Main region text after All Attack: {}", main_text);
+            let main_text = check_main_region_text(
+                bot.screen_width as u32,
+                bot.screen_height as u32,
+                false,
+            );
+            info!("(Attack phase - white) Main region text: {}", main_text);
+
             if Self::is_attackers_text(&main_text) {
-                press_key(winapi::um::winuser::VK_SPACE as u16);
+                press_key(0x20);
                 sleep(Duration::from_secs(1));
                 break;
+            } else {
+                sleep(Duration::from_secs(2));
             }
-            sleep(Duration::from_secs(2));
         }
 
-        // 3. Ciklus: amíg "Next" szerepel, kattintsuk a main region text-et
+        // 3) Click "Next" until it goes away
         loop {
-            let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, true);
-            info!("(Attack phase) Main region text in Next loop: {}", main_text);
+            let main_text = check_main_region_text(
+                bot.screen_width as u32,
+                bot.screen_height as u32,
+                false,
+            );
+            info!("(Attack phase - post-attack Next loop) Main region text: {}", main_text);
+
             if main_text.contains("Next") {
-                press_key(winapi::um::winuser::VK_SPACE as u16);
+                press_key(0x20);
                 sleep(Duration::from_secs(1));
             } else {
                 break;

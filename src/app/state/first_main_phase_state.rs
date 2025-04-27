@@ -15,6 +15,7 @@ use crate::app::{
         opponents_turn_state::OpponentsTurnState,
     },
 };
+use crate::app::game_state_updater::load_side_creatures;
 
 pub struct FirstMainPhaseState {
     skip_to_opponent: bool,
@@ -31,7 +32,7 @@ impl State<AppError> for FirstMainPhaseState {
         self.cast_other_spells(bot);
         self.decide_attack_or_skip(bot);
 
-        if bot.land_played_this_turn && bot.game_state.mana_available == 0 {
+        if bot.land_played_this_turn && bot.updater.state.mana_available == 0 {
             warn!("Már játszottunk land-et de nincs elérhető mana!");
         }
 
@@ -61,7 +62,18 @@ impl FirstMainPhaseState {
     fn refresh_battlefield_if_needed(&mut self, bot: &mut Bot) {
         if bot.first_main_phase_done {
             info!("Refreshing battlefield creatures from OCR at turn start.");
-            Bot::update_battlefield_creatures_from_ocr(bot);
+            let ours = load_side_creatures(
+                bot.screen_width as u32,
+                bot.screen_height as u32,
+                false,
+            );
+            let opps = load_side_creatures(
+                bot.screen_width as u32,
+                bot.screen_height as u32,
+                true,
+            );
+            bot.battlefield_creatures = ours;
+            bot.battlefield_opponent_creatures = opps;
         } else {
             info!("First main phase of the game; skipping initial OCR refresh.");
             bot.first_main_phase_done = true;
@@ -117,10 +129,23 @@ impl FirstMainPhaseState {
                     bot.battlefield_creatures
                 );
 
-                // maybe OCR‐refresh
+                // ha még van mana és van mit castolni, frissítjük az OCR-es battlefield-et
                 if bot.land_number > 0 && bot.can_cast_creature() {
                     info!("Still have mana & creatures to cast: refreshing battlefield OCR.");
-                    Bot::update_battlefield_creatures_from_ocr(bot);
+
+                    let ours = load_side_creatures(
+                        bot.screen_width as u32,
+                        bot.screen_height as u32,
+                        false, // saját oldal
+                    );
+                    let opps = load_side_creatures(
+                        bot.screen_width as u32,
+                        bot.screen_height as u32,
+                        true,  // ellenfél
+                    );
+                    bot.battlefield_creatures = ours;
+                    bot.battlefield_opponent_creatures = opps;
+
                 } else {
                     info!("Either out of mana or no more creatures—no further battlefield reads.");
                     break;

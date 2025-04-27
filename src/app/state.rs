@@ -9,6 +9,8 @@ pub mod attack_phase_state;
 pub mod second_main_phase_state;
 pub mod submit_state;
 pub mod opponents_turn_state;
+pub mod combat_damage_state;
+
 
 pub trait State<AppError> {
     fn update(&mut self, bot: &mut crate::app::bot::Bot) -> Result<(), AppError>;

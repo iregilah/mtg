@@ -1,5 +1,6 @@
 // app/card_attribute.rs
 
+use std::any::Any;
 use crate::app::game_state::GamePhase;
 use tracing::{debug, info, warn};
 
@@ -28,6 +29,10 @@ pub enum Effect {
         phase:   GamePhase,
         deps:    Vec<usize>,
     },
+}
+
+impl Eq for Effect {
+    fn assert_receiver_is_total_eq(&self) {}
 }
 
 /// Ways to proliferate counters
@@ -112,7 +117,7 @@ impl Clone for Box<dyn CardAttribute> {
 }
 
 /// Core trait: card abilities implement this.
-pub trait CardAttribute: CardAttributeClone {
+pub trait CardAttribute: Any + CardAttributeClone {
     /// Called when a trigger fires.
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect>;
 }
@@ -435,6 +440,36 @@ impl CardAttribute for DelayedCounterAttribute {
                 });
             }
         }
+        None
+    }
+}
+
+/// Lifelink: a harci sebzés után életet nyersz ugyanolyan mértékben, de nem termel Effect-et.
+#[derive(Clone)]
+pub struct LifelinkAttribute;
+
+impl CardAttribute for LifelinkAttribute {
+    fn on_trigger(&mut self, _trigger: &Trigger) -> Option<Effect> {
+        None
+    }
+}
+
+/// Deathtouch: 1 sebzés is öl, passzív marker
+#[derive(Clone)]
+pub struct DeathtouchAttribute;
+
+impl CardAttribute for DeathtouchAttribute {
+    fn on_trigger(&mut self, _trigger: &Trigger) -> Option<Effect> {
+        None
+    }
+}
+
+/// Trample: blokkoló után felesleges sebzés a játékosra, passzív marker
+#[derive(Clone)]
+pub struct TrampleAttribute;
+
+impl CardAttribute for TrampleAttribute {
+    fn on_trigger(&mut self, _trigger: &Trigger) -> Option<Effect> {
         None
     }
 }

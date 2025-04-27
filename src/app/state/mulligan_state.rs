@@ -3,6 +3,7 @@
 use crate::app::error::AppError;
 use crate::app::game_state::GamePhase;
 use std::{thread::sleep, time::Duration};
+use std::time::Instant;
 use tracing::{warn, info};
 
 use crate::app::{
@@ -23,11 +24,12 @@ impl MulliganState {
 impl State<AppError> for MulliganState {
     fn update(&mut self, bot: &mut Bot) -> Result<(), AppError> {
         info!("MulliganState: starting mulligan phase.");
-        bot.time_waiting_started = std::time::Instant::now();
-        info!("Waiting for Mulligan state... (Mulligan logic)");
         Self::wait_for_start_order(self, bot);
-        info!("Mulligan state completed. Ready.");
+        info!("Mulligan selection done.");
+
+        // short pause before moving on
         sleep(Duration::from_secs(1));
+
         Self::wait_for_next_for_hover(self, bot);
         Self::move_cursor_and_examine_cards(self, bot);
 
@@ -44,37 +46,54 @@ impl State<AppError> for MulliganState {
 }
 
 impl MulliganState {
+    /// Wait until "You Go First" / "Opponent Goes First" appears or timeout.
     fn wait_for_start_order(&self, bot: &mut Bot) {
+        bot.time_waiting_started = Instant::now();
         loop {
-            let start_order_text = check_start_order_text(bot.screen_width as u32, bot.screen_height as u32);
-            info!("Start order region text: {}", start_order_text);
-            if start_order_text == "You Go First" || start_order_text == "Opponent Goes First" {
-                if start_order_text == "Opponent Goes First" {
+            let txt = check_start_order_text(
+                bot.screen_width as u32,
+                bot.screen_height as u32,
+            );
+            info!("Start order region text: {}", txt);
+
+            match txt.as_str() {
+                "Opponent Goes First" => {
                     bot.card_count = 8;
-                    info!("Opponent started. Card count set to 8.");
-                } else {
-                    bot.card_count = 7;
-                    info!("We started. Card count remains 7.");
+                    info!("Opponent starts; setting card_count = 8.");
+                    press_key(0x20);
+                    break;
                 }
-                press_key(winapi::um::winuser::VK_SPACE as u16);
-                break;
+                "You Go First" => {
+                    bot.card_count = 7;
+                    info!("We start; keeping card_count = 7.");
+                    press_key(0x20);
+                    break;
+                }
+                _ if Instant::now().duration_since(bot.time_waiting_started) > bot.time_waiting_threshold => {
+                    warn!("Mulligan timeout; exiting start-order loop.");
+                    break;
+                }
+                _ => {
+                    sleep(Duration::from_secs(2));
+                }
             }
-            if std::time::Instant::now().duration_since(bot.time_waiting_started) > bot.time_waiting_threshold {
-                warn!("Mulligan waiting time passed. Exiting mulligan loop...");
-                break;
-            }
-            sleep(Duration::from_secs(2));
         }
     }
 
+
+    /// If opponent started (8 cards), wait for “Next” before we hover cards.
     fn wait_for_next_for_hover(&self, bot: &mut Bot) {
         if bot.card_count == 8 {
-            info!("Opponent started; waiting for 'Next' before hovering...");
+            info!("Opponent started; waiting for 'Next' to hover cards.");
             loop {
                 let is_red = check_button_color(&bot.cords) == "red";
-                let main_text = check_main_region_text(bot.screen_width as u32, bot.screen_height as u32, is_red);
-                if main_text.contains("Next") {
-                    info!("'Next' detected; proceeding to hoovering.");
+                let txt = check_main_region_text(
+                    bot.screen_width as u32,
+                    bot.screen_height as u32,
+                    is_red,
+                );
+                if txt.contains("Next") {
+                    info!("Detected 'Next'; proceeding to hover cards.");
                     break;
                 }
                 sleep(Duration::from_secs(2));
@@ -82,12 +101,12 @@ impl MulliganState {
         }
     }
 
+    /// Examine all cards (OCR) then center the cursor.
     fn move_cursor_and_examine_cards(&self, bot: &mut Bot) {
         bot.examine_cards();
-        let center_x = bot.screen_width / 2;
-        let center_y = bot.screen_height / 2;
-        set_cursor_pos(center_x, center_y);
-        info!("Cursor moved to screen center: ({}, {})", center_x, center_y);
+        let (cx, cy) = (bot.screen_width / 2, bot.screen_height / 2);
+        set_cursor_pos(cx, cy);
+        info!("Cursor centered at ({}, {})", cx, cy);
         sleep(Duration::from_secs(1));
     }
 }

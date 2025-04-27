@@ -12,6 +12,7 @@ pub mod gre;
 pub mod game_state;
 
 pub mod error;
+pub mod game_state_updater;
 
 use crate::app::error::AppError;
 use crate::app::game_state::Player;
@@ -23,6 +24,9 @@ use std::thread::sleep;
 use std::time::Duration;
 use state::start_state::StartState;
 use state::State;
+use crate::app::game_state_updater::GameStateUpdater;
+use crate::app::card_library::build_card_library;
+
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Color {
@@ -40,6 +44,7 @@ impl App {
     pub fn start(&mut self) {
         // Kezdeti fázis
         let mut current_phase = self.state.phase();
+        let mut updater = GameStateUpdater::new();
 
         // Fő futóciklus
         loop {
@@ -52,7 +57,7 @@ impl App {
                 break;
             }
 
-            // 3) Ellenőrizzük, hogy változott‑e a fázis
+            // 3) Ellenőrizzük, hogy változott-e a fázis
             let next_phase = self.state.phase();
             if next_phase != current_phase {
                 info!("Phase change: {:?} -> {:?}", current_phase, next_phase);
@@ -64,12 +69,25 @@ impl App {
                 current_phase = next_phase;
             }
 
-            // 4) Resolve-oljuk a GRE stackjét (spell-ek, triggered abilket)
+            // 4) Resolve-oljuk a GRE stack-jét
             self.bot.gre.resolve_stack();
 
-            // 5) State váltás, ha szükséges
+            // Új: központosított GameState frissítés
+            updater.refresh_all(
+                self.bot.screen_width as u32,
+                self.bot.screen_height as u32,
+                &self.bot.cards_texts,
+                &build_card_library(),
+                self.bot.land_number,
+                self.bot.land_played_this_turn,
+                &self.bot.gre.stack,
+            );
+            // App felelős a GameState beemeléséért
+            self.bot.updater.state = updater.state.clone();
+
+
+            // 5) Állapot váltás, ha szükséges
             self.next_state();
-            // Nincs szükség a current_phase újra-beállítására, mert a ciklus elején újra lekérjük
         }
     }
 
@@ -100,6 +118,5 @@ impl App {
             &mut Vec::new(),   // ekkor még nincs kártya-terület
             Player::Us,
         );
-
     }
 }

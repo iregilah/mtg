@@ -40,6 +40,9 @@ pub struct ManaCost {
 }
 
 impl ManaCost {
+    pub fn default() -> Self {
+        ManaCost { colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0 }
+    }
     pub fn colored(&self) -> u32 { self.red + self.blue + self.green + self.black + self.white }
     pub fn total(&self) -> u32 { self.colored() + self.colorless }
 }
@@ -52,7 +55,18 @@ pub struct Card {
     pub attributes: Vec<Box<dyn CardAttribute>>,
     pub triggers: Vec<Trigger>,
 }
-
+// Card Default + new() + with_trigger()
+impl Default for Card {
+    fn default() -> Self {
+        Card {
+            name: String::new(),
+            card_type: CardType::Land,
+            mana_cost: ManaCost::default(),
+            attributes: Vec::new(),
+            triggers: Vec::new(),
+        }
+    }
+}
 impl PartialEq for Card {
     fn eq(&self, other: &Self) -> bool {
         // Compare the relevant fields of `Card` to determine equality
@@ -75,6 +89,11 @@ impl std::fmt::Debug for Card {
 }
 
 impl Card {
+
+    pub fn with_trigger(mut self, trigger: Trigger, _effect: Effect) -> Self {
+        self.triggers.push(trigger);
+        self
+    }
     pub fn trigger_by(&mut self, trigger: &Trigger) -> Vec<Effect> {
         self.attributes.iter_mut().filter_map(|a| a.on_trigger(trigger)).collect()
     }

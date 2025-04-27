@@ -58,70 +58,72 @@ impl SecondMainPhaseState {
         Self {}
     }
 
-    /// Ellenőrzi a normál módú main region szöveget.
-    /// Ha "Opponent's Turn" szerepel, visszaadja false értékkel, jelezve, hogy nem kell tovább menni.
+    /// 1) Read the non-red “main” region once before any casts.
+    ///    If we already see “Opponent's Turn”, bail out early.
     fn initial_check(&self, bot: &mut Bot) -> bool {
-        let main_text = check_main_region_text(
+        let txt = check_main_region_text(
             bot.screen_width as u32,
             bot.screen_height as u32,
             false,
         );
-        info!("(Initial check) Main region text (normal): {}", main_text);
-        if main_text.contains("Opponent's Turn") {
-            info!("Detected 'Opponent's Turn' during initial check.");
+        info!("(Initial check) Main region text: {}", txt);
+        if txt.contains("Opponent's Turn") {
+            info!("Detected 'Opponent's Turn' on entry; skipping second main.");
             return false;
         }
         true
     }
 
-
-    /// Újra ellenőrzi a normál módú main region szöveget, és ha "Opponent's Turn" szerepel,
-    /// visszaadja false értékkel.
+    /// 3) After casting creatures, check again for “Opponent's Turn”.
     fn post_cast_check(&self, bot: &mut Bot) -> bool {
-        let main_text_after = check_main_region_text(
+        let txt = check_main_region_text(
             bot.screen_width as u32,
             bot.screen_height as u32,
             false,
         );
-        info!("(Post-cast check) Main region text (normal): {}", main_text_after);
-        if main_text_after.contains("Opponent's Turn") {
-            info!("Detected 'Opponent's Turn' after casting.");
+        info!("(Post-cast check) Main region text: {}", txt);
+        if txt.contains("Opponent's Turn") {
+            info!("Detected 'Opponent's Turn' after casting; exiting.");
             return false;
         }
         true
     }
 
-    /// A red button (white_invert_image) módszert használva olvassa a main region szöveget,
-    /// és kattint azokra a helyzetekre, amikor "Next" szerepel, míg "End Turn" nem jön.
+    /// 4) Loop in red-mode until we see “End Turn”, tapping space on “Next” or “End Turn”.
     fn process_end_turn(&self, bot: &mut Bot) {
         loop {
-            let main_text_red = check_main_region_text(
+            let txt = check_main_region_text(
                 bot.screen_width as u32,
                 bot.screen_height as u32,
                 true,
             );
-            info!("(Red processing) Main region text: {}", main_text_red);
-            if main_text_red.contains("Next") {
-                info!("Detected 'Next' in red mode. Clicking...");
-                press_key(winapi::um::winuser::VK_SPACE as u16);
+            info!("(End-turn red) Main region text: {}", txt);
+
+            if txt.contains("Next") {
+                info!("Detected 'Next'; pressing Space to advance.");
+                press_key(0x20);
                 sleep(Duration::from_secs(1));
-            } else if main_text_red.contains("End Turn") {
-                info!("Detected 'End Turn' in red mode. Clicking to end turn.");
-                press_key(winapi::um::winuser::VK_SPACE as u16);
-                break;
-            } else {
-                sleep(Duration::from_secs(2));
+                continue;
             }
+
+            if txt.contains("End Turn") {
+                info!("Detected 'End Turn'; pressing Space to finish.");
+                press_key(0x20);
+                break;
+            }
+
+            // otherwise wait and retry
+            sleep(Duration::from_secs(2));
         }
     }
 
-    /// Reseteli az állapotot: pl. a land_played_this_turn flag-et false-ra állítja, valamint kikapcsolja
-    /// a battlefield creature-ök summoning_sickness tulajdonságát.
+
+    /// 5) Reset per-turn flags & clear summoning sickness.
     fn reset_state(&self, bot: &mut Bot) {
         bot.land_played_this_turn = false;
         for card in bot.battlefield_creatures.values_mut() {
-            if let Creature(ref mut creature) = card.card_type {
-                creature.summoning_sickness = false;
+            if let Creature(ref mut cr) = card.card_type {
+                cr.summoning_sickness = false;
             }
         }
     }

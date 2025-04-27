@@ -1,0 +1,178 @@
+// src/app/game_state_updater.rs
+
+use tracing::{info, warn};
+use crate::app::game_state::GameState;
+use crate::app::gre::{PriorityEntry, StackEntry};
+use crate::app::card_library::{build_card_library, Card};
+use crate::app::ocr;
+use crate::app::creature_positions::{get_own_creature_positions, get_opponent_creature_positions};
+use crate::app::cards_positions::get_card_positions;
+use crate::app::ocr::{read_creature_text};
+use crate::app::ui::{get_average_color, is_color_within_tolerance};
+use std::collections::{HashMap, BinaryHeap};
+
+
+/// Generalizált branch‐számláló (odd/even).
+pub fn count_branch(
+    y1: i32,
+    region_height: i32,
+    rect_width: i32,
+    mut x: i32,
+    tol: f64,
+    target_color: (u8, u8, u8),
+    initial_count: usize,
+    first_step: i32,
+    step: i32,
+    max_count: usize,
+) -> usize {
+    let mut count = initial_count;
+    info!(
+        "count_branch: init={}, first_step={}, step={}, max={}",
+        count, first_step, step, max_count
+    );
+    x -= first_step;
+    while count < max_count && x >= 0 {
+        let c = get_average_color(x, y1, rect_width, region_height);
+        info!("  sample @ x={} → {:?}", x, c);
+        if is_color_within_tolerance(c, target_color, tol) {
+            count += 2;
+            x -= step;
+        } else {
+            break;
+        }
+    }
+    info!("count_branch final count={}", count);
+    count
+}
+
+/// Hány lény van az oldalon OCR‐al?
+pub fn detect_creature_count_for_side(
+    screen_width: u32,
+    screen_height: u32,
+    is_opponent: bool,
+) -> usize {
+    info!(
+        "detect_creature_count_for_side({}, {}, {})",
+        screen_width, screen_height, is_opponent
+    );
+    let sw = screen_width as f64;
+    let sh = screen_height as f64;
+    let (y1_norm, y2_norm) = if is_opponent {
+        (101.761, 104.891)
+    } else {
+        (185.141, 188.731)
+    };
+    let y1 = ((y1_norm / 381.287) * sh).floor() as i32;
+    let y2 = ((y2_norm / 381.287) * sh).floor() as i32;
+    let region_h = y2 - y1;
+    let rect_w = ((4.4 / 677.292) * sw).floor() as i32;
+    let center_x = (screen_width as i32) / 2 - rect_w / 2;
+
+    let target_color = (210, 175, 157);
+    let tol = 0.035;
+
+    let center_color = get_average_color(center_x, y1, rect_w, region_h);
+    info!("  center color: {:?}", center_color);
+    let center_is_card = is_color_within_tolerance(center_color, target_color, tol);
+
+    let scale = sw / 677.292;
+    let step = (69.0 * scale).floor() as i32;
+    let first = (34.492 * scale).floor() as i32;
+
+    if center_is_card {
+        count_branch(y1, region_h, rect_w, center_x, tol, target_color, 1, step, step, 7)
+    } else {
+        count_branch(y1, region_h, rect_w, center_x, tol, target_color, 0, first, step, 8)
+    }
+}
+
+/// Betölti és OCR‐al felismeri az oldalon lévő lényeket.
+pub fn load_side_creatures(
+    screen_width: u32,
+    screen_height: u32,
+    is_opponent: bool,
+) -> HashMap<String, Card> {
+    let mut map = HashMap::new();
+    let library = build_card_library();
+    let count = detect_creature_count_for_side(screen_width, screen_height, is_opponent);
+    let positions = if is_opponent {
+        get_opponent_creature_positions(count, screen_width, screen_height)
+    } else {
+        get_own_creature_positions(count, screen_width, screen_height)
+    };
+
+    for (i, pos) in positions.into_iter().enumerate() {
+        let name = read_creature_text(pos, i + 1, is_opponent, screen_width, screen_height);
+        if let Some(card) = library.get(&name) {
+            map.insert(name.clone(), card.clone());
+        } else if !name.is_empty() {
+            warn!("Unknown OCR creature `{}` on {}", name, if is_opponent{"opponent"}else{"own"} );
+        }
+    }
+    map
+}
+
+/// Központosított GameState‐frissítő modul.
+pub struct GameStateUpdater {
+    pub state: GameState,
+}
+
+impl GameStateUpdater {
+    pub fn new() -> Self {
+        Self { state: GameState::default() }
+    }
+    /// Segédfüggvény a GRE StackEntry-k GameState StackEntry-vé konvertálásához.
+    pub fn update_stack(&mut self, gre_stack: &BinaryHeap<PriorityEntry>) {
+        // just clone each GRE StackEntry
+        self.state.stack = gre_stack
+            .iter()
+            .map(|pe| pe.entry.clone())
+            .collect();
+    }
+    pub fn update_life_totals(&mut self, w: u32, h: u32) {
+        self.state.life_total          = ocr::read_life_total(false, w, h);
+        self.state.opponent_life_total = ocr::read_life_total(true,  w, h);
+    }
+
+    pub fn update_hand(&mut self, cards_texts: &[String], library: &HashMap<String, Card>) {
+        self.state.hand.clear();
+        for txt in cards_texts {
+            if let Some(card) = library.get(txt) {
+                self.state.hand.push(card.clone());
+            } else {
+                warn!("OCR nem egyeztetett kártya: {}", txt);
+            }
+        }
+    }
+
+    pub fn update_battlefield_creatures(&mut self, w: u32, h: u32) {
+        let ours = load_side_creatures(w, h, false);
+        let opps = load_side_creatures(w, h, true);
+        self.state.battlefield          = ours.values().cloned().collect();
+        self.state.opponent_battlefield = opps.values().cloned().collect();
+    }
+
+    pub fn update_mana_and_land(&mut self, available_mana: u32, land_played: bool) {
+        self.state.mana_available         = available_mana;
+        self.state.land_played_this_turn  = land_played;
+    }
+
+
+
+    pub fn refresh_all(
+        &mut self,
+        screen_width:  u32,
+        screen_height: u32,
+        cards_texts:   &[String],
+        library:       &HashMap<String, Card>,
+        available_mana:u32,
+        land_played:   bool,
+        gre_stack:     &BinaryHeap<PriorityEntry>,
+    ) {
+        self.update_life_totals(screen_width, screen_height);
+        self.update_hand(cards_texts, library);
+        self.update_battlefield_creatures(screen_width, screen_height);
+        self.update_mana_and_land(available_mana, land_played);
+        self.update_stack(gre_stack);
+    }
+}

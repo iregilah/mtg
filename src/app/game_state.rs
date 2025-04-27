@@ -3,8 +3,12 @@
 use crate::app::card_library::Card;
 use crate::app::card_attribute::Effect;
 use tracing::{error, info, warn};
+use crate::app::card_library::build_card_library;
+use crate::app::bot::Bot;
+use crate::app::{game_state, gre};
+pub use crate::app::gre::StackEntry;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct GameState {
     pub hand: Vec<Card>,
     pub battlefield: Vec<Card>,
@@ -38,15 +42,73 @@ pub enum GamePhase {
     Beginning,
     PreCombatMain,
     Combat,
+    CombatDamage,
     PostCombatMain,
     End,
 }
-#[derive(Debug, Clone)]
-pub enum StackEntry {
-    Spell { card: Card, controller: Player },
-    TriggeredAbility { source: Card, effect: Effect, controller: Player },
-    ActivatedAbility { source: Card, effect: Effect, controller: Player },
+#[derive(Debug, PartialEq)]
+pub enum GameResult {
+    Win,
+    Loss,
+    Draw,
+    Ongoing,
 }
+
+impl GameState {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+
+    /*
+    pub fn remove_card(&mut self, player: Player, card_id: u32) {
+        // Example: Remove card from battlefield
+        self.battlefield.retain(|card| card.id() != card_id);
+    }*/
+    pub fn is_game_over(&self) -> bool {
+        self.life_total <= 0 || self.opponent_life_total <= 0
+    }
+
+    pub fn result(&self) -> GameResult {
+        let us_dead = self.life_total <= 0;
+        let opp_dead = self.opponent_life_total <= 0;
+        match (us_dead, opp_dead) {
+            (true, true) => GameResult::Draw,
+            (false, true) => GameResult::Win,
+            (true, false) => GameResult::Loss,
+            _ => GameResult::Ongoing,
+        }
+    }
+    pub fn goto_phase(&mut self, _phase: GamePhase) {
+        // TODO
+    }
+    /// Pull fields from the Bot into the persistent GameState.
+    pub fn update_from_bot(&mut self, bot: &Bot) {
+        let library = build_card_library();
+
+        // Update hand from OCR texts
+        self.hand = bot.cards_texts.iter()
+            .filter_map(|text| library.get(text).cloned())
+            .collect();
+
+        // Update battlefields
+        self.battlefield = bot.battlefield_creatures.values().cloned().collect();
+        self.opponent_battlefield = bot.battlefield_opponent_creatures.values().cloned().collect();
+
+        // Update mana and land flags
+        self.mana_available = bot.land_number;
+        self.land_played_this_turn = bot.land_played_this_turn;
+
+        // Update stack snapshot
+        self.stack = bot.gre.stack
+            .iter()
+            .map(|pe| pe.entry.clone())
+            .collect();
+
+    }
+}
+
+
 //TODO valószínűleg hiba
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Player { Us, Opponent }

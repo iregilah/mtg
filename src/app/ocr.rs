@@ -1,10 +1,11 @@
 // app/ocr.rs
 
-use std::{process::Command, slice, thread::sleep, time::Duration};
+use image::Rgba;
+use std::{process::Command, thread::sleep, time::Duration};
 use tracing::{error, info};
 use thiserror::Error;
 
-use screenshot::get_screenshot;
+use screenshots::Screen;
 
 use image::{DynamicImage, ImageBuffer};
 use image::imageops::{crop_imm, resize, FilterType};
@@ -37,12 +38,12 @@ pub fn threshold_image(
 
 /// Standard OCR pre‐processing: grayscale → contrast → threshold → upscale.
 pub fn preprocess_image(cropped: &DynamicImage) -> DynamicImage {
-    let gray        = cropped.to_luma8();
+    let gray = cropped.to_luma8();
     let contrasted = DynamicImage::ImageLuma8(gray).adjust_contrast(40.0);
-    let gray2       = contrasted.to_luma8();
-    let thresh      = threshold_image(&gray2, 100);
-    let binarized   = DynamicImage::ImageLuma8(thresh).to_rgba8();
-    let upscaled    = resize(
+    let gray2 = contrasted.to_luma8();
+    let thresh = threshold_image(&gray2, 100);
+    let binarized = DynamicImage::ImageLuma8(thresh).to_rgba8();
+    let upscaled = resize(
         &binarized,
         binarized.width() * 2,
         binarized.height() * 2,
@@ -74,10 +75,17 @@ pub fn white_invert_image(cropped: &DynamicImage) -> DynamicImage {
 
 /// Grab a full‐screen `DynamicImage`.
 fn capture_screen() -> Option<DynamicImage> {
-    let scn = get_screenshot(0).ok()?;
-    let raw = unsafe { slice::from_raw_parts(scn.raw_data(), scn.raw_len()).to_vec() };
-    ImageBuffer::from_raw(scn.width() as u32, scn.height() as u32, raw)
-        .map(DynamicImage::ImageRgba8)
+    // Capture the primary monitor (first available screen)
+    let screens = Screen::all().ok()?;
+    let screen = screens.get(0)?;
+    // Capture a screenshot (screenshots::image::RgbaImage)
+    let buffer = screen.capture().ok()?;
+    // Convert screenshots::RgbaImage into your image::ImageBuffer<Rgba<u8>, Vec<u8>>
+    let (w, h) = (buffer.width(), buffer.height());
+    let raw = buffer.into_raw(); // Vec<u8> of RGBA pixels
+    let img_buf = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(w, h, raw)
+        .expect("from_raw failed: dimensions/raw length mismatch");
+    Some(DynamicImage::ImageRgba8(img_buf))
 }
 
 /// If cropping fails, one of these errors will be returned.
@@ -85,13 +93,21 @@ fn capture_screen() -> Option<DynamicImage> {
 pub enum CropError {
     #[error("Crop region {x1},{y1}-{x2},{y2} is outside of image bounds {width}×{height}")]
     OutOfBounds {
-        x1: u32, y1: u32, x2: u32, y2: u32,
-        width: u32, height: u32,
+        x1: u32,
+        y1: u32,
+        x2: u32,
+        y2: u32,
+        width: u32,
+        height: u32,
     },
     #[error("Crop region has zero width or height: {width}×{height}")]
     InvalidRegion {
-        x1: u32, y1: u32, x2: u32, y2: u32,
-        width: u32, height: u32,
+        x1: u32,
+        y1: u32,
+        x2: u32,
+        y2: u32,
+        width: u32,
+        height: u32,
     },
 }
 
@@ -158,8 +174,8 @@ pub fn check_start_order_text(screen_width: u32, screen_height: u32) -> String {
     // 1) compute region
     let x1 = (238.294 / 677.292 * screen_width as f64).floor() as u32;
     let x2 = (437.764 / 677.292 * screen_width as f64).floor() as u32;
-    let y1 = (21.432  / 381.287 * screen_height as f64).floor() as u32;
-    let y2 = (43.454  / 381.287 * screen_height as f64).floor() as u32;
+    let y1 = (21.432 / 381.287 * screen_height as f64).floor() as u32;
+    let y2 = (43.454 / 381.287 * screen_height as f64).floor() as u32;
     info!("  region coords: x1={}, y1={}, x2={}, y2={}", x1, y1, x2, y2);
 
     // 2) capture
@@ -297,7 +313,7 @@ pub fn read_creature_text(
 
     // 5) Build stable temp filename
     let parity = if index % 2 == 1 { "odd" } else { "even" };
-    let side   = if is_opponent      { "opponents_creature" } else { "creature" };
+    let side = if is_opponent { "opponents_creature" } else { "creature" };
     let temp_filename = format!("temp_{}_{}_{}.png", parity, side, index);
     info!("Saving temporary OCR image as '{}'", temp_filename);
 
@@ -357,4 +373,44 @@ pub fn get_card_text(
 
     info!("OCR result for card {}: {:?}", index, result);
     result
+}
+
+pub fn read_life_total(
+    is_opponent: bool,
+    screen_width: u32,
+    screen_height: u32,
+) -> i32 {
+    // Relatív koordináták: felső sáv ellenfélnek, alsó sáv nekünk
+    let (x1f, y1f, x2f, y2f) = if is_opponent {
+        (0.45, 0.03, 0.55, 0.10)
+    } else {
+        (0.45, 0.90, 0.55, 0.97)
+    };
+    let x1 = (x1f * screen_width as f64).floor() as u32;
+    let x2 = (x2f * screen_width as f64).floor() as u32;
+    let y1 = (y1f * screen_height as f64).floor() as u32;
+    let y2 = (y2f * screen_height as f64).floor() as u32;
+
+    // Képernyőfogás és vágás
+    let screen = match capture_screen() {
+        Some(img) => img,
+        None => return 0,
+    };
+    let cropped = match crop_region(&screen, x1, y1, x2, y2) {
+        Ok(img) => img,
+        Err(_) => return 0,
+    };
+
+    // Előfeldolgozás és OCR
+    let processed = preprocess_image(&cropped);
+    let temp_file = if is_opponent { "temp_opp_life.png" } else { "temp_us_life.png" };
+    let raw_text = run_tesseract_pipeline(&processed, temp_file);
+
+    // Csak a számjegyeket tartjuk meg, parse-oljuk
+    raw_text
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse::<i32>()
+        .unwrap_or(0)
 }

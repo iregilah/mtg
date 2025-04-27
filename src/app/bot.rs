@@ -1,12 +1,22 @@
 // app/bot.rs
+use crate::multi_platform::{screen_size, windows_platform};
+#[cfg(target_os = "linux")]
+use crate::multi_platform::x11_platform;
+#[cfg(all(target_os = "linux", not(feature = "force_x11")))]
+use crate::multi_platform::wayland_platform;
 
+use crate::app::gre::Gre;
 use crate::app::card_attribute::Damage;
 use crate::app::card_attribute::Effect;
 use crate::app::game_state::Player;
 use crate::app::game_state::Player as OtherPlayer;
 use crate::app::game_state::GameEvent;
-use crate::app::gre::Gre;
+use crate::app::gre;
 use crate::app::error::AppError;
+use crate::app::game_state::StackEntry;
+use crate::app::game_state::StackEntry as GameStateStackEntry;
+use crate::app::gre::StackEntry as GreStackEntry;
+use crate::app::game_state_updater::GameStateUpdater;
 use std::{
     collections::HashMap,
     thread::sleep,
@@ -14,16 +24,9 @@ use std::{
 };
 use tracing::{error, info, warn};
 
-use crate::app::{
-    card_library::{build_card_library, Card, CardType},
-    cards_positions::get_card_positions,
-    creature_positions::{get_own_creature_positions, get_opponent_creature_positions},
-    ui::{Cords, set_cursor_pos, left_click, press_key, get_average_color, is_color_within_tolerance},
-    ocr::{read_creature_text, get_card_text},
-};
+use crate::app::{card_library::{build_card_library, Card, CardType}, cards_positions::get_card_positions, creature_positions::{get_own_creature_positions, get_opponent_creature_positions}, ui::{Cords, set_cursor_pos, left_click, press_key, get_average_color, is_color_within_tolerance}, ocr::{read_creature_text, get_card_text}, game_state};
 
-use crate::app::game_state::{GameState, Strategy, SimpleHeuristic};
-
+use crate::app::game_state::{Strategy, SimpleHeuristic};
 
 pub struct Bot {
     pub end_game_counter: u32,         // Játék végi számláló (előbb, mint majd a teljes játéklogika részletezése megtörténik).
@@ -48,8 +51,9 @@ pub struct Bot {
     pub last_cast_card_name: String,
     pub first_main_phase_done: bool,
     pub gre: Gre,
-    pub game_state: GameState,
     pub strategy: Box<dyn Strategy>,
+    pub updater: GameStateUpdater,
+    pub attacking: Vec<String>,
 }
 
 pub enum StateOverride {
@@ -58,66 +62,68 @@ pub enum StateOverride {
 
 impl Bot {
     pub fn new() -> Self {
-        unsafe {
-            // Screen metrics
-            let screen_width = winapi::um::winuser::GetSystemMetrics(winapi::um::winuser::SM_CXSCREEN);
-            let screen_height = winapi::um::winuser::GetSystemMetrics(winapi::um::winuser::SM_CYSCREEN);
-            let cords = Cords::new(screen_width, screen_height);
+        // get a platform‐independent screen size
+        let (screen_width, screen_height) = screen_size().unwrap_or_else(|e| {
+            // fallback to a sensible default
+            eprintln!("Warning: failed to get screen size: {}. Defaulting to 800×600", e);
+            (800, 600)
+        });
+        let cords = Cords::new(screen_width, screen_height);
 
-            // Build and configure the GRE
-            let mut gre = Gre::new(Player::Us);
+        // Build and configure the GRE
+        let mut gre = Gre::new(Player::Us);
 
-            // Replacement effect example:
-            // If something would be destroyed, exile it instead.
-            gre.add_replacement_effect(move |eff| {
-                if let Effect::DestroyTarget { target_filter } = eff {
-                    Some(vec![Effect::ExileTarget { target_filter: target_filter.clone() }])
-                } else {
-                    None
-                }
-            });
+        // Replacement effect example:
+        gre.add_replacement_effect(10, move |eff| {
+            if let Effect::DestroyTarget { target_filter } = eff {
+                Some(vec![Effect::ExileTarget { target_filter: target_filter.clone() }])
+            } else {
+                None
+            }
+        });
 
-            // Continuous effect example:
-            // All damage instances deal +1 extra.
-            gre.add_continuous_effect(|eff| {
-                if let Effect::DamageTarget { damage, .. } = eff {
-                    let new_amount = damage.amount.saturating_add(1);
-                    *damage = Damage { amount: new_amount, special: damage.special.clone() };
-                }
-            });
+        // Continuous effect example:
+        gre.add_continuous_effect(|eff| {
+            if let Effect::DamageTarget { damage, .. } = eff {
+                let new_amount = damage.amount.saturating_add(1);
+                *damage = Damage { amount: new_amount, special: damage.special.clone() };
+            }
+        });
 
-            // Instantiate Bot
-            let bot = Self {
-                end_game_counter: 0,
-                end_game_threshold: 3,
-                time_game_started: Instant::now(),
-                time_game_threshold: Duration::from_secs(1200),
-                time_waiting_started: Instant::now(),
-                time_waiting_threshold: Duration::from_secs(120),
-                cords,
-                screen_width,
-                screen_height,
-                card_count: 0,
-                cards_texts: Vec::new(),
-                land_count: 0,
-                land_number: 0,
-                last_opponent_turn: false,
-                opponent_turn_counter: 0,
-                land_played_this_turn: false,
-                battlefield_creatures: HashMap::new(),
-                battlefield_opponent_creatures: HashMap::new(),
-                next_state_override: None,
-                last_cast_card_name: String::new(),
-                first_main_phase_done: false,
-                gre,
-                game_state: GameState::default(),
-                strategy: Box::new(SimpleHeuristic),
-            };
+        // Instantiate Bot
+        let bot = Self {
+            end_game_counter: 0,
+            end_game_threshold: 3,
+            time_game_started: Instant::now(),
+            time_game_threshold: Duration::from_secs(1200),
+            time_waiting_started: Instant::now(),
+            time_waiting_threshold: Duration::from_secs(120),
+            cords,
+            screen_width,
+            screen_height,
+            card_count: 0,
+            cards_texts: Vec::new(),
+            land_count: 0,
+            land_number: 0,
+            last_opponent_turn: false,
+            opponent_turn_counter: 0,
+            land_played_this_turn: false,
+            battlefield_creatures: HashMap::new(),
+            battlefield_opponent_creatures: HashMap::new(),
+            next_state_override: None,
+            last_cast_card_name: String::new(),
+            first_main_phase_done: false,
+            gre,
+            strategy: Box::new(SimpleHeuristic),
+            updater: GameStateUpdater::new(),
+            attacking: Vec::new(),
+        };
 
-            bot
-        }
+        bot
     }
-    /// Draws exactly one card (the rightmost) and OCR‐reads only that card.
+
+
+    /// Draw exactly one card, OCR it, update hand and GameState.
     pub fn draw_card(&mut self) {
         let new_index = self.card_count;
         let new_count = new_index + 1;
@@ -129,39 +135,36 @@ impl Bot {
         set_cursor_pos(pos.hover_x as i32, card_y);
         sleep(Duration::from_secs(2));
 
-        // Now OCR exactly that one card:
+        // OCR the new card
         let text = {
-            // Temporarily override card_count so get_card_text uses the right positions
             let old = self.card_count;
             self.card_count = new_count;
-            let t = get_card_text(
-                new_index,
-                new_count,
-                self.screen_width as u32,
-                self.screen_height as u32,
-            );
+            let t = get_card_text(new_index, new_count, self.screen_width as u32, self.screen_height as u32);
             self.card_count = old;
             t
         };
 
+        // Update Bot state
         self.cards_texts.push(text.clone());
-        self.card_count = new_count;
+        self.card_count = self.cards_texts.len();
+
+
         info!("Drew card '{}' → Updated hand: {:?}", text, self.cards_texts);
     }
+
     pub fn play_land(&mut self) {
         if !self.land_played_this_turn {
             // find a land in hand via library
             let library = build_card_library();
-            if let Some((idx, text)) = self.cards_texts.iter().enumerate()
+            if let Some((idx, _text)) = self.cards_texts.iter().enumerate()
                 .find(|(_, txt)| library.values().any(|c| matches!(c.card_type, CardType::Land) && txt.contains(&c.name)))
             {
-                info!("Playing land '{}' at hand index {}", text, idx);
+                info!("Playing land at hand idx {}", idx);
                 Self::play_card(self, idx);
                 self.land_played_this_turn = true;
-                self.game_state.mana_available += 1;
-                self.game_state.land_played_this_turn = true;
-                // remove from game state hand
-                self.game_state.hand.remove(idx);
+                self.land_number += 1;
+                self.cards_texts.remove(idx);
+                self.card_count = self.cards_texts.len();
             }
         }
         sleep(Duration::from_secs(1));
@@ -179,7 +182,6 @@ impl Bot {
         self.gre.trigger_event(GameEvent::TurnEnded, &mut all_creatures, Player::Us);
         self.gre.resolve_stack();
         self.land_played_this_turn = false;
-        self.game_state.land_played_this_turn = false;
     }
 
     /// Cast the first affordable instant, then click on one of our creatures as target.
@@ -221,59 +223,44 @@ impl Bot {
             }
         }
     }
-    /// Megpróbálja kijátszani a paraméterként kapott kártyát, ha elég mana áll rendelkezésre.
-    /// Ha sikeres, visszaadja a felhasznált teljes mana mennyiségét.
+    /// Attempt to cast a card at `pos`, update mana in GameState on success.
     fn try_cast_card(&mut self, pos: usize, card: &Card) -> Result<u32, AppError> {
         let cost = &card.mana_cost;
-        let available_colored = self.game_state.mana_available;
-        let available_colorless = self.game_state.mana_available;
-
+        let available_colored = self.land_number;
         let needed_colored = cost.colored();
         let needed_colorless = cost.colorless;
 
-        // Ha nincs elég színes mana:
         if available_colored < needed_colored {
-            info!(
-                "Not enough colored mana for '{}'. Required: {}, available: {}.",
-                card.name, needed_colored, available_colored
-            );
             return Err(AppError::InsufficientMana {
                 required: cost.total(),
                 colored: needed_colored,
                 colorless: needed_colorless,
                 available_colored,
-                available_colorless,
+                available_colorless: available_colored,
             });
         }
-
-        // Ha nincs elég maradék színtelen manára:
         let leftover = available_colored - needed_colored;
         if leftover < needed_colorless {
-            info!(
-                "Not enough leftover mana for '{}'. Required {} colorless, leftover {}.",
-                card.name, needed_colorless, leftover
-            );
             return Err(AppError::InsufficientMana {
                 required: cost.total(),
                 colored: needed_colored,
                 colorless: needed_colorless,
                 available_colored,
-                available_colorless,
+                available_colorless: available_colored,
             });
         }
 
-        // Visszatért a régi részletes info-log:
         info!(
             "Casting '{}' költség: {} színes, {} színtelen (össz: {})",
             card.name, needed_colored, needed_colorless, cost.total()
         );
 
-        // sikeres cast
+        let cost_total = cost.total();
         Self::play_card(self, pos);
         self.last_cast_card_name = card.name.clone();
-        Ok(cost.total())
+        self.land_number = self.land_number.saturating_sub(cost_total);
+        Ok(cost_total)
     }
-
 
     /// Generic függvény, amely a kapott predikátum alapján megpróbálja kijátszani a kártyákat.
     /// A `predicate` closure eldönti, hogy az adott kártya megfelel-e a feltételnek (például Instant vagy Creature).
@@ -297,15 +284,16 @@ impl Bot {
                     if predicate(&card.card_type) {
                         if let Ok(cost_used) = self.try_cast_card(i, card) {
                             mana_available = mana_available.saturating_sub(cost_used);
-                            // if it's a creature, clone it with summoning_sickness = true
                             if let CardType::Creature(mut cr) = card.card_type.clone() {
                                 cr.summoning_sickness = true;
                                 let mut new_card = card.clone();
                                 new_card.card_type = CardType::Creature(cr);
                                 self.battlefield_creatures.insert(new_card.name.clone(), new_card);
                             }
-                            // always OCR‐refresh opponent side too
-                            Bot::update_battlefield_creatures_from_ocr(self);
+                            self.updater.update_battlefield_creatures(
+                                self.screen_width as u32,
+                                self.screen_height as u32,
+                            );
                         } else if let Err(e) = self.try_cast_card(i, card) {
                             warn!("Cannot cast {}: {:?}", card.name, e);
                         }
@@ -412,7 +400,10 @@ impl Bot {
             if creature_exists {
                 info!("Creature card detected in hand. Attempting to cast creature.");
                 self.cast_creatures();
-                Bot::update_battlefield_creatures_from_ocr(self);
+                self.updater.update_battlefield_creatures(
+                    self.screen_width as u32,
+                    self.screen_height as u32,
+                );
             }
         }
     }
@@ -451,154 +442,6 @@ impl Bot {
         let result = ocr_text.contains(name);
         // info!("text_contains() returning: {}", result);
         result
-    }
-
-
-    // 2. Creature-számolási logika egy oldalon (saját vagy ellenfél)
-    /// Generalized counting for both odd and even branches.
-    fn count_branch(
-        y1: i32,
-        region_height: i32,
-        rect_width: i32,
-        mut examined_rect_x: i32,
-        tol: f64,
-        target_color: (u8, u8, u8),
-        initial_count: usize,
-        first_step: i32,
-        step: i32,
-        max_count: usize,
-    ) -> usize {
-        let mut count = initial_count;
-        info!("Starting branch: initial_count={}, first_step={}, step={}, max_count={}", count, first_step, step, max_count);
-        // Move to the first neighboring slot
-        examined_rect_x -= first_step;
-
-        // Walk until we hit max_count or run out of screen
-        while count < max_count && examined_rect_x >= 0 {
-            let sample_color = get_average_color(examined_rect_x, y1, rect_width, region_height);
-            info!("Branch: examined_rect_x={}, sample_color={:?}",examined_rect_x, sample_color);
-
-            if is_color_within_tolerance(sample_color, target_color, tol) {
-                count += 2;
-                info!("Branch: increasing count to {}", count);
-                examined_rect_x -= step;
-            } else {
-                info!("Branch: color out of tolerance, stopping");
-                break;
-            }
-        }
-        info!("Branch final creature count={}", count);
-        count
-    }
-
-
-    /// Detects how many creatures are on one side of the board.
-    fn detect_creature_count_for_side(screen_width: u32, screen_height: u32, is_opponent: bool) -> usize {
-        info!("detect_creature_count_for_side() called with screen_width = {}, screen_height = {}, is_opponent = {}", screen_width, screen_height, is_opponent);
-        let screen_width_f = screen_width as f64;
-        let screen_height_f = screen_height as f64;
-
-        // Normalized Y positions differ for opponent vs. own side
-        let (y1_norm, y2_norm) = if is_opponent {
-            (101.761, 104.891)
-        } else {
-            (185.141, 188.731)
-        };
-
-        // Convert norms to pixel coordinates
-        let y1 = ((y1_norm / 381.287) * screen_height_f).floor() as i32;
-        let y2 = ((y2_norm / 381.287) * screen_height_f).floor() as i32;
-        let region_height = y2 - y1;
-        let rect_width = ((4.4 / 677.292) * screen_width_f).floor() as i32;
-
-        let screen_center_x = (screen_width as i32) / 2;
-        let examined_rect_x = screen_center_x - rect_width / 2;
-        info!("Calculated values: y1 = {}, y2 = {}, region_height = {}, rect_width = {}, screen_center_x = {}, center_rect_x = {}", y1, y2, region_height, rect_width, screen_center_x, examined_rect_x);
-
-        // Target color and tolerance for card detection
-        let target_color = (210, 175, 157);
-        let tol = 0.035;
-
-        // Check the center slot first
-        let center_color = get_average_color(examined_rect_x, y1, rect_width, region_height);
-        info!("Center area average color: {:?}", center_color);
-        let center_is_card = is_color_within_tolerance(center_color, target_color, tol);
-        info!("Center area considered as card: {}", center_is_card);
-
-        // Precompute stepping distances
-        let scale = screen_width_f / 677.292;
-        let step = (69.0 * scale).floor() as i32;
-        let first_step_even = (34.492 * scale).floor() as i32;
-
-        // Delegate to the generalized branch counter
-        if center_is_card {
-            // Odd branch: start from center (count=1), use same step for first move
-            Self::count_branch(y1, region_height, rect_width, examined_rect_x, tol, target_color, 1, step, step, 7)
-        } else {
-            // Even branch: start empty (count=0), initial offset differs
-            Self::count_branch(y1, region_height, rect_width, examined_rect_x, tol, target_color, 0, first_step_even, step, 8)
-        }
-    }
-
-    /// Load creatures for one side (own or opponent) into a fresh HashMap.
-    fn load_side_creatures(
-        &self,
-        is_opponent: bool,
-        count: usize,
-        library: &HashMap<String, Card>,
-    ) -> HashMap<String, Card> {
-        let mut map = HashMap::new();
-        let positions = if is_opponent {
-            get_opponent_creature_positions(count, self.screen_width as u32, self.screen_height as u32)
-        } else {
-            get_own_creature_positions(count, self.screen_width as u32, self.screen_height as u32)
-        };
-        for (i, pos) in positions.into_iter().enumerate() {
-            let name = read_creature_text(pos, i + 1, is_opponent, self.screen_width as u32, self.screen_height as u32);
-            if let Some(card) = library.get(&name) {
-                info!(
-                    "Found {} battlefield creature: {}",
-                    if is_opponent { "opponent" } else { "own" },
-                    name
-                );
-                map.insert(name.clone(), card.clone());
-            } else if !name.is_empty() {
-                warn!(
-                    "Unknown {} battlefield creature OCR’d as `{}`",
-                    if is_opponent { "opponent" } else { "own" },
-                    name
-                );
-            }
-        }
-        info!(
-            "{} battlefield map keys: {:?}",
-            if is_opponent { "Opponent" } else { "Own" },
-            map.keys()
-        );
-        map
-    }
-
-    // 3. Frissítő függvény, amely a creature_positions modul szerint feltölti a battlefield_creatures vektorokat
-    pub fn update_battlefield_creatures_from_ocr(bot: &mut Bot) {
-        let library = build_card_library();
-
-        // detect counts
-        let own_count = Self::detect_creature_count_for_side(
-            bot.screen_width as u32,
-            bot.screen_height as u32,
-            false,
-        );
-        let opp_count = Self::detect_creature_count_for_side(
-            bot.screen_width as u32,
-            bot.screen_height as u32,
-            true,
-        );
-        info!("Detected own creature count: {}", own_count);
-        info!("Detected opponent creature count: {}", opp_count);
-
-        // load both sides in one line each
-        bot.battlefield_creatures = bot.load_side_creatures(false, own_count, &library);
-        bot.battlefield_opponent_creatures = bot.load_side_creatures(true, opp_count, &library);
     }
 
     pub fn examine_cards(&mut self) {
