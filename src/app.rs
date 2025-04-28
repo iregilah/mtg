@@ -42,22 +42,22 @@ pub struct App {
 
 impl App {
     pub fn start(&mut self) {
-        // Kezdeti fázis
+        // Initial phase
         let mut current_phase = self.state.phase();
         let mut updater = GameStateUpdater::new();
 
-        // Fő futóciklus
+        // Main run loop
         loop {
-            // 1) Késleltetett effektusok dispatch-olása az aktuális fázisra
+            // 1) Dispatch delayed effects for the current phase
             self.bot.gre.dispatch_delayed(current_phase);
 
-            // 2) State update
+            // 2) Update the state
             if let Err(e) = self.state.update(&mut self.bot) {
-                error!("App hiba az állapotfrissítés során: {:?}", e);
+                error!("App error during state update: {:?}", e);
                 break;
             }
 
-            // 3) Ellenőrizzük, hogy változott-e a fázis
+            // 3) Check for a phase change
             let next_phase = self.state.phase();
             if next_phase != current_phase {
                 info!("Phase change: {:?} -> {:?}", current_phase, next_phase);
@@ -69,10 +69,10 @@ impl App {
                 current_phase = next_phase;
             }
 
-            // 4) Resolve-oljuk a GRE stack-jét
+            // 4) Resolve the GRE stack
             self.bot.gre.resolve_stack();
 
-            // Új: központosított GameState frissítés
+            // New: centralized GameState update
             updater.refresh_all(
                 self.bot.screen_width as u32,
                 self.bot.screen_height as u32,
@@ -82,11 +82,10 @@ impl App {
                 self.bot.land_played_this_turn,
                 &self.bot.gre.stack,
             );
-            // App felelős a GameState beemeléséért
+            // App is responsible for integrating the GameState
             self.bot.updater.state = updater.state.clone();
 
-
-            // 5) Állapot váltás, ha szükséges
+            // 5) Transition to the next state if needed
             self.next_state();
         }
     }
@@ -112,10 +111,10 @@ impl App {
         info!("App: Transitioning to new state.");
         let new_phase = next.phase();
         self.state = next;
-        // Értesítjük a GRE-t a fázisváltásról
+        // Notify the GRE of the phase change
         self.bot.gre.trigger_event(
             GameEvent::PhaseChange(new_phase),
-            &mut Vec::new(),   // ekkor még nincs kártya-terület
+            &mut Vec::new(),   // no cards in play at this point
             Player::Us,
         );
     }

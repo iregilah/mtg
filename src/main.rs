@@ -15,7 +15,6 @@ use windows::Win32::UI::HiDpi::{
 #[cfg(target_os = "windows")]
 fn enable_dpi_awareness() {
     unsafe {
-        // Próbáld meg használni a DPI awareness beállítást
         let result = SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
         if let Err(e) = result {
             eprintln!("Failed to set DPI awareness: {:?}", e);
