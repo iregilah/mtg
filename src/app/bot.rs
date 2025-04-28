@@ -29,22 +29,22 @@ use crate::app::{card_library::{build_card_library, Card, CardType}, cards_posit
 use crate::app::game_state::{Strategy, SimpleHeuristic};
 
 pub struct Bot {
-    pub end_game_counter: u32,         // Játék végi számláló (előbb, mint majd a teljes játéklogika részletezése megtörténik).
-    pub end_game_threshold: u32,         // Küszöbérték, ami alapján a játék véget ér.
-    pub time_game_started: Instant,      // A játék indításának időpontja.
-    pub time_game_threshold: Duration,   // Maximális játékidő (pl. 20 perc).
-    pub time_waiting_started: Instant,   // A várakozás (mulligan) kezdete.
-    pub time_waiting_threshold: Duration, // Maximális várakozási idő (pl. 2 perc).
-    pub cords: Cords,                    // A képernyő gomb koordinátáit tartalmazó struktúra.
-    pub screen_width: i32,               // Képernyő szélessége.
-    pub screen_height: i32,              // Képernyő magassága.
-    pub card_count: usize,               // Mulligan után beállított kártyák száma (pl. 7 vagy 8).
-    pub cards_texts: Vec<String>,        // Hooverelés során kiolvasott kártyaszövegek vektora.
-    pub land_count: u32,                 // A játékban lévő összes land száma
-    pub land_number: u32,                // Az adott körben kijátszott land-ek száma (egy körben csak 1 lehet).
-    pub last_opponent_turn: bool,        // Logikai érték: utolsó körben ellenfél lépett-e.
-    pub opponent_turn_counter: usize,    // Az ellenfél kör számlálója.
-    pub land_played_this_turn: bool,     // true, ha a jelenlegi körben már kijátszottuk a land-et.
+    pub end_game_counter: u32,
+    pub end_game_threshold: u32,
+    pub time_game_started: Instant,
+    pub time_game_threshold: Duration,
+    pub time_waiting_started: Instant,
+    pub time_waiting_threshold: Duration,
+    pub cords: Cords,
+    pub screen_width: i32,
+    pub screen_height: i32,
+    pub card_count: usize,
+    pub cards_texts: Vec<String>,
+    pub land_count: u32,
+    pub land_number: u32,
+    pub last_opponent_turn: bool,
+    pub opponent_turn_counter: usize,
+    pub land_played_this_turn: bool,
     pub battlefield_creatures: HashMap<String, Card>,
     pub battlefield_opponent_creatures: HashMap<String, Card>,
     pub next_state_override: Option<StateOverride>,
@@ -262,9 +262,7 @@ impl Bot {
         Ok(cost_total)
     }
 
-    /// Generic függvény, amely a kapott predikátum alapján megpróbálja kijátszani a kártyákat.
-    /// A `predicate` closure eldönti, hogy az adott kártya megfelel-e a feltételnek (például Instant vagy Creature).
-    /// Visszaadja a megmaradt mana mennyiségét.
+    /// Attempts to cast all cards for which `predicate` returns `true`, updates battlefield creatures, and returns the remaining mana.
     pub fn cast_cards_by_filter<F>(&mut self, predicate: F) -> u32
     where
         F: Fn(&CardType) -> bool,
@@ -337,17 +335,16 @@ impl Bot {
         })
     }
 
-    /// Megpróbál egyetlen creature-t kijátszani.
-    /// Ha sikerül, visszaadja a castolt kártya nevét és a felhasznált mana mennyiségét.
+    //// Attempts to cast one creature, returning its name and mana spent if successful.
     pub fn cast_one_creature(&mut self) -> Option<(String, u32)> {
         let library = crate::app::card_library::build_card_library();
 
-        // index‑alapú ciklus, így az ocr_text clonolása után nincs immut borrow amikor majd mut-ot kérünk
+        // Use index-based loop to avoid borrow conflicts
         for i in 0..self.cards_texts.len() {
-            // klónozzuk a szöveget, hogy ne tartsunk borrow‑ot self‑en
+            // Clone OCR text to avoid borrowing self
             let ocr_text = self.cards_texts[i].clone();
 
-            // csak creature típusú cardokra szűrünk
+            // Filter only Creature cards matching the text
             if let Some(card) = library
                 .values()
                 .find(|card| {
@@ -355,15 +352,15 @@ impl Bot {
                         && Bot::text_contains(&card.name, &ocr_text)
                 })
             {
-                // most, hogy nincs élő borrow self‑en, jöhet a mutable borrow
+                // Safe to mutably borrow self now
                 match self.try_cast_card(i, card) {
                     Ok(cost_used) => {
-                        // sikeres cast: név + mana
+                        // Successfully cast: return name and mana
                         return Some((card.name.clone(), cost_used));
                     }
                     Err(e) => {
                         warn!("Nem sikerült kirakni {}: {:?}", card.name, e);
-                        // próbálja tovább a következő kártyát
+                        // On failure, try next card
                     }
                 }
             }
@@ -382,9 +379,7 @@ impl Bot {
         self.can_cast_card(|t| matches!(t, CardType::Creature(_)))
     }
 
-    /// Új segédfüggvény, amely a creature casting esetét dolgozza fel.
-    /// A SecondMainPhaseState-ben ezt hívjuk a process_casting() helyett,
-    /// centralizálva ezzel a creature-k kijátszás logikáját.
+    /// Central helper for casting creatures in SecondMainPhaseState.
     pub fn process_creature_casting(&mut self) {
         if self.land_number > 0 {
             let card_library = build_card_library();
