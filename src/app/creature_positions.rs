@@ -1,8 +1,6 @@
 // app/creature_positions.rs
 
-/// Egy creature pozícióját tartalmazza:
-/// - Az OCR által érintett térrész vízszintes határai (ocr_x1, ocr_x2) és a vertikális határai (ocr_y1, ocr_y2).
-/// - Ugyanez a kattintási területre (click_x1, click_y1, click_x2, click_y2).
+/// Bounds for creature OCR and click areas.
 #[derive(Debug, Clone)]
 pub struct CreaturePosition {
     pub ocr_x1: u32,
@@ -15,12 +13,7 @@ pub struct CreaturePosition {
     pub click_y2: u32,
 }
 
-/// Egy belső függvény, amely a megadott creature count és a "is_opponent" flag alapján számolja ki
-/// a megfelelő pozíciókat. A számítások arányosan történnek a 677.292-es (vízszintes) illetve
-/// a 381.287-es (vertikális) alapértékhez képest.
-///
-/// Az x koordináták esetén egy match-ben adunk meg előre fix értékeket (az egyes count esetek szerint).
-/// Ha a count 8, akkor a középső 6 elem (pozíció 2–7) megegyezik a 6-os count koordinátáival.
+/// Compute creature positions for given count, screen size, and side.
 fn get_creature_positions(
     creature_count: usize,
     screen_width: f64,

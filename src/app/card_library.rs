@@ -6,7 +6,20 @@ use crate::app::card_attribute::*;
 use crate::app::card_attribute::CardAttribute;
 use tracing::{error, info, warn};
 use std::cmp::PartialEq;
-const CACOPHONY_SCAMP: &str = "Cacophony Scamp";
+
+const FELONIOUS_RAGE: &str           = "Felonious Rage";
+const BURST_LIGHTNING: &str          = "Burst Lightning";
+const LIGHTNING_STRIKE: &str         = "Lightning Strike";
+const MONSTROUS_RAGE: &str           = "Monstrous Rage";
+const MONSTER_ROLE: &str             = "Monster Role";
+const CACOPHONY_SCAMP: &str          = "Cacophony Scamp";
+const ELECTROSTATIC_INFANTRY: &str   = "Electrostatic Infantry";
+const MONASTERY_SWIFTSPEAR: &str     = "Monastery Swiftspear";
+const HEARTFIRE_HERO: &str           = "Heartfire Hero";
+const DEMONIC_RUCKUS: &str           = "Demonic Ruckus";
+const TEMPORAL_DISTORTION: &str      = "Temporal Distortion";
+const ROCKFACE_VILLAGE: &str         = "Rockface Village";
+
 #[derive(Debug, Clone)]
 #[derive(PartialEq)]
 pub enum CardType { Creature(Creature), Instant(Instant_), Enchantment(Enchantment), Land }
@@ -103,9 +116,9 @@ pub fn build_card_library() -> HashMap<String, Card> {
     let mut lib = HashMap::new();
 
     // Felonious Rage
-    lib.insert("Felonious Rage".into(), Card {
-        name: "Felonious Rage".into(),
-        card_type: CardType::Instant(Instant_ { name: "Felonious Rage".into() }),
+    lib.insert(FELONIOUS_RAGE.into(), Card {
+        name: FELONIOUS_RAGE.into(),
+        card_type: CardType::Instant(Instant_ { name: FELONIOUS_RAGE.into() }),
         mana_cost: ManaCost { colorless: 0, red: 1, blue: 0, green: 0, black: 0, white: 0 },
         attributes: vec![Box::new(FeloniousRageAttribute)],
         triggers: vec![
@@ -116,9 +129,9 @@ pub fn build_card_library() -> HashMap<String, Card> {
     });
 
     // Burst Lightning
-    lib.insert("Burst Lightning".into(), Card {
-        name: "Burst Lightning".into(),
-        card_type: CardType::Instant(Instant_ { name: "Burst Lightning".into() }),
+    lib.insert(BURST_LIGHTNING.into(), Card {
+        name: BURST_LIGHTNING.into(),
+        card_type: CardType::Instant(Instant_ { name: BURST_LIGHTNING.into() }),
         mana_cost: ManaCost { colorless: 4, red: 1, blue: 0, green: 0, black: 0, white: 0 },
         attributes: vec![Box::new(BurstLightningAttribute { kicked: false })],
         triggers: vec![
@@ -127,9 +140,9 @@ pub fn build_card_library() -> HashMap<String, Card> {
     });
 
     // Lightning Strike
-    lib.insert("Lightning Strike".into(), Card {
-        name: "Lightning Strike".into(),
-        card_type: CardType::Instant(Instant_ { name: "Lightning Strike".into() }),
+    lib.insert(LIGHTNING_STRIKE.into(), Card {
+        name: LIGHTNING_STRIKE.into(),
+        card_type: CardType::Instant(Instant_ { name: LIGHTNING_STRIKE.into() }),
         mana_cost: ManaCost { colorless: 1, red: 1, blue: 0, green: 0, black: 0, white: 0 },
         attributes: vec![Box::new(DealDamageOnResolve { amount: 3 })],
         triggers: vec![
@@ -138,9 +151,9 @@ pub fn build_card_library() -> HashMap<String, Card> {
     });
 
     // Monstrous Rage
-    lib.insert("Monstrous Rage".into(), Card {
-        name: "Monstrous Rage".into(),
-        card_type: CardType::Instant(Instant_ { name: "Monstrous Rage".into() }),
+    lib.insert(MONSTROUS_RAGE.into(), Card {
+        name: MONSTROUS_RAGE.into(),
+        card_type: CardType::Instant(Instant_ { name: MONSTROUS_RAGE.into() }),
         mana_cost: ManaCost { colorless: 0, red: 1, blue: 0, green: 0, black: 0, white: 0 },
         // first buff +2/+0 until end of turn,
         // *then* attach the Monster Role token,
@@ -154,15 +167,15 @@ pub fn build_card_library() -> HashMap<String, Card> {
         ],
     });
     // Monster Role token itself:
-    lib.insert("Monster Role".into(), Card {
-        name: "Monster Role".into(),
-        card_type: CardType::Enchantment(Enchantment { name: "Monster Role".into() }),
+    lib.insert(MONSTER_ROLE.into(), Card {
+        name: MONSTER_ROLE.into(),
+        card_type: CardType::Enchantment(Enchantment { name: MONSTER_ROLE.into() }),
         mana_cost: ManaCost { colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0 },
         attributes: vec![ Box::new(MonsterRoleBuff) ],
         triggers: vec![], // no discrete triggers
     });
 
-    //TODO öszsesre megcsinálni
+
     // Cacophony Scamp
     lib.insert(CACOPHONY_SCAMP.into(), Card {
         name: CACOPHONY_SCAMP.into(),
@@ -188,10 +201,10 @@ pub fn build_card_library() -> HashMap<String, Card> {
     });
 
     // Electrostatic Infantry
-    lib.insert("Electrostatic Infantry".into(), Card {
-        name: "Electrostatic Infantry".into(),
+    lib.insert(ELECTROSTATIC_INFANTRY.into(), Card {
+        name: ELECTROSTATIC_INFANTRY.into(),
         card_type: CardType::Creature(Creature {
-            name: "Electrostatic Infantry".into(),
+            name: ELECTROSTATIC_INFANTRY.into(),
             summoning_sickness: true,
             power: 1,
             toughness: 2,
@@ -207,10 +220,10 @@ pub fn build_card_library() -> HashMap<String, Card> {
     });
 
     // Monastery Swiftspear
-    lib.insert("Monastery Swiftspear".into(), Card {
-        name: "Monastery Swiftspear".into(),
+    lib.insert(MONASTERY_SWIFTSPEAR.into(), Card {
+        name: MONASTERY_SWIFTSPEAR.into(),
         card_type: CardType::Creature(Creature {
-            name: "Monastery Swiftspear".into(),
+            name: MONASTERY_SWIFTSPEAR.into(),
             summoning_sickness: true,
             power: 1,
             toughness: 2,
@@ -227,10 +240,10 @@ pub fn build_card_library() -> HashMap<String, Card> {
     });
 
     // Heartfire Hero
-    lib.insert("Heartfire Hero".into(), Card {
-        name: "Heartfire Hero".into(),
+    lib.insert(HEARTFIRE_HERO.into(), Card {
+        name: HEARTFIRE_HERO.into(),
         card_type: CardType::Creature(Creature {
-            name: "Heartfire Hero".into(),
+            name: HEARTFIRE_HERO.into(),
             summoning_sickness: true,
             power: 1,
             toughness: 1,
@@ -246,9 +259,9 @@ pub fn build_card_library() -> HashMap<String, Card> {
     });
 
     // Demonic Ruckus
-    lib.insert("Demonic Ruckus".into(), Card {
-        name: "Demonic Ruckus".into(),
-        card_type: CardType::Enchantment(Enchantment { name: "Demonic Ruckus".into() }),
+    lib.insert(DEMONIC_RUCKUS.into(), Card {
+        name: DEMONIC_RUCKUS.into(),
+        card_type: CardType::Enchantment(Enchantment { name: DEMONIC_RUCKUS.into() }),
         mana_cost: ManaCost { colorless: 1, red: 1, blue: 0, green: 0, black: 0, white: 0 },
         attributes: vec![
             Box::new(EnchantCreatureBuff {
@@ -263,9 +276,9 @@ pub fn build_card_library() -> HashMap<String, Card> {
             Trigger::OnDeath,
         ],
     });
-    lib.insert("Temporal Distortion".into(), Card {
-        name: "Temporal Distortion".into(),
-        card_type: CardType::Instant(Instant_ { name: "Temporal Distortion".into() }),
+    lib.insert(TEMPORAL_DISTORTION.into(), Card {
+        name: TEMPORAL_DISTORTION.into(),
+        card_type: CardType::Instant(Instant_ { name: TEMPORAL_DISTORTION.into() }),
         mana_cost: ManaCost { colorless: 2, red: 0, blue: 2, green: 0, black: 0, white: 0 },
         attributes: vec![ Box::new(DelayedCounterAttribute { delay_phase: GamePhase::PostCombatMain }) ],
         triggers:   vec![ Trigger::Custom("OnCastResolved".into()) ],
@@ -273,8 +286,8 @@ pub fn build_card_library() -> HashMap<String, Card> {
 
 
     // Rockface Village
-    lib.insert("Rockface Village".into(), Card {
-        name: "Rockface Village".into(),
+    lib.insert(ROCKFACE_VILLAGE.into(), Card {
+        name: ROCKFACE_VILLAGE.into(),
         card_type: CardType::Land,
         mana_cost: ManaCost { colorless: 0, red: 0, blue: 0, green: 0, black: 0, white: 0 },
         attributes: vec![

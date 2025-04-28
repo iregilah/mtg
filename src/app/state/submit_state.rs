@@ -1,4 +1,5 @@
 // app/state/submit_state.rs
+//later state of the project it will be used for submit cards
 
 use crate::app::error::AppError;
 use crate::app::game_state::GamePhase;
@@ -38,7 +39,7 @@ impl State<AppError> for SubmitState {
 
     fn next(&mut self) -> Box<dyn State<AppError>> {
         info!("SubmitState: transitioning to FirstMainPhaseState.");
-        // Miután submitoltunk, visszalépünk az első main phase-be
+
         Box::new(FirstMainPhaseState::new())
     }
     fn phase(&self) -> GamePhase {

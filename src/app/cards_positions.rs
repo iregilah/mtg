@@ -2,9 +2,7 @@
 
 use tracing::warn;
 
-/// --- Kártya pozíciók ---
-/// - `hover_x`: azt a vízszintes koordinátát adja meg, ahová az egérmutatót kell mozgatni a tooltip megjelenítéséhez.
-/// - `ocr_x1` és `ocr_x2`: az OCR számára azt a vízszintes intervallumot határozzák meg, ahol a kártyanév látható.
+/// Card hover and OCR bounds.
 #[derive(Debug, Copy, Clone)]
 pub struct CardPosition {
     pub hover_x: u32,
@@ -14,8 +12,7 @@ pub struct CardPosition {
 
 
 
-/// Számolja ki a kártya pozíciókat a képernyő szélessége alapján.
-/// A relatív értékek a 677.292-es alapértékhez képest vannak megadva.
+/// Scale positions for given screen width.
 pub fn get_card_positions(card_count: usize, screen_width: u32) -> Vec<CardPosition> {
     let factor = screen_width as f64;
     match card_count {

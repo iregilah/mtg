@@ -34,9 +34,7 @@ pub enum GameEvent {
     PhaseChange(GamePhase),
 }
 
-// A GamePhase enum a játék belső fázisait reprezentálja, függetlenül attól,
-// hogy a bot épp melyik UI-state-ben van – így tudunk szabályosan időzített effektusokat kezelni.
-
+/// Internal game phases for effect timing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GamePhase {
     Beginning,
@@ -60,11 +58,6 @@ impl GameState {
     }
 
 
-    /*
-    pub fn remove_card(&mut self, player: Player, card_id: u32) {
-        // Example: Remove card from battlefield
-        self.battlefield.retain(|card| card.id() != card_id);
-    }*/
     pub fn is_game_over(&self) -> bool {
         self.life_total <= 0 || self.opponent_life_total <= 0
     }
@@ -109,7 +102,7 @@ impl GameState {
 }
 
 
-//TODO valószínűleg hiba
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Player { Us, Opponent }
 

@@ -12,7 +12,7 @@ use crate::app::ui::{get_average_color, is_color_within_tolerance};
 use std::collections::{HashMap, BinaryHeap};
 
 
-/// Generalizált branch‐számláló (odd/even).
+/// Generic branch counter (odd/even).
 pub fn count_branch(
     y1: i32,
     region_height: i32,
@@ -45,7 +45,7 @@ pub fn count_branch(
     count
 }
 
-/// Hány lény van az oldalon OCR‐al?
+/// Detect creature count via OCR for a side.
 pub fn detect_creature_count_for_side(
     screen_width: u32,
     screen_height: u32,
@@ -86,7 +86,7 @@ pub fn detect_creature_count_for_side(
     }
 }
 
-/// Betölti és OCR‐al felismeri az oldalon lévő lényeket.
+/// Load and OCR-recognize creatures on a side.
 pub fn load_side_creatures(
     screen_width: u32,
     screen_height: u32,
@@ -112,7 +112,7 @@ pub fn load_side_creatures(
     map
 }
 
-/// Központosított GameState‐frissítő modul.
+/// Centralized GameState updater.
 pub struct GameStateUpdater {
     pub state: GameState,
 }
@@ -121,7 +121,7 @@ impl GameStateUpdater {
     pub fn new() -> Self {
         Self { state: GameState::default() }
     }
-    /// Segédfüggvény a GRE StackEntry-k GameState StackEntry-vé konvertálásához.
+    /// Helper to convert GRE StackEntries to GameState entries.
     pub fn update_stack(&mut self, gre_stack: &BinaryHeap<PriorityEntry>) {
         // just clone each GRE StackEntry
         self.state.stack = gre_stack
@@ -129,11 +129,12 @@ impl GameStateUpdater {
             .map(|pe| pe.entry.clone())
             .collect();
     }
+    /// Update life totals via OCR.
     pub fn update_life_totals(&mut self, w: u32, h: u32) {
         self.state.life_total          = ocr::read_life_total(false, w, h);
         self.state.opponent_life_total = ocr::read_life_total(true,  w, h);
     }
-
+    /// Update hand from OCR texts.
     pub fn update_hand(&mut self, cards_texts: &[String], library: &HashMap<String, Card>) {
         self.state.hand.clear();
         for txt in cards_texts {
@@ -144,21 +145,21 @@ impl GameStateUpdater {
             }
         }
     }
-
+    /// Update battlefield creatures for both sides.
     pub fn update_battlefield_creatures(&mut self, w: u32, h: u32) {
         let ours = load_side_creatures(w, h, false);
         let opps = load_side_creatures(w, h, true);
         self.state.battlefield          = ours.values().cloned().collect();
         self.state.opponent_battlefield = opps.values().cloned().collect();
     }
-
+    /// Update mana and land-play flag.
     pub fn update_mana_and_land(&mut self, available_mana: u32, land_played: bool) {
         self.state.mana_available         = available_mana;
         self.state.land_played_this_turn  = land_played;
     }
 
 
-
+    /// Refresh all GameState fields.
     pub fn refresh_all(
         &mut self,
         screen_width:  u32,

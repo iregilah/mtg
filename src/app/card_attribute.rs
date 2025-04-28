@@ -23,7 +23,7 @@ pub enum Effect {
     AddMana       { mana_type: String },
     CreateRole    { role: String },
 
-    /// Új variáns: késleltetett effektus egy későbbi fázisban, opcionális függőségekkel
+    ///delayed effect in a later phase with optional dependencies
     Delayed {
         effect: Box<Effect>,
         phase:   GamePhase,
