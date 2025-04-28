@@ -1,4 +1,4 @@
-// windows_platform.rs
+// src/multiplatform/windows_platform.rs
 #![cfg(target_os = "windows")]
 
 use windows::Win32::Foundation::HWND;

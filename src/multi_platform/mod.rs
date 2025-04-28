@@ -1,4 +1,4 @@
-// mod.rs
+// src/multiplatform/mod.rs
 pub mod windows_platform;
 pub mod wayland_platform;
 pub mod x11_platform;

@@ -1,4 +1,4 @@
-// x11_platform.rs
+// src/multiplatform/x11_platform.rs
 #![cfg(target_os = "linux")]
 
 use std::ffi::CString;

@@ -1,4 +1,4 @@
-// wayland_platform.rs
+// src/multiplatform/wayland_platform.rs
 #![cfg(target_os = "linux")]
 
 use wayland_client::platform::WaylandPlatform;
