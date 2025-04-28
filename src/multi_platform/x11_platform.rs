@@ -1,4 +1,3 @@
-// src/multiplatform/x11_platform.rs
 #![cfg(target_os = "linux")]
 
 use std::ffi::CString;
@@ -8,39 +7,40 @@ use x11::xlib::{Display, XImage};
 use x11::xtest;
 use std::{thread::sleep, time::Duration};
 
+/// Reads the color of the pixel at (x, y) from the default X11 display.
 pub fn get_pixel_color(x: i32, y: i32) -> Result<(u8, u8, u8), String> {
     unsafe {
-        // Csatlakozás a default X serverhez (DISPLAY env változó alapján)
+        // Open default X display (DISPLAY env var)
         let display = xlib::XOpenDisplay(ptr::null());
         if display.is_null() {
-            return Err("Nem sikerült csatlakozni az X11 display-hez".into());
+            return Err("Failed to connect to X11 display".into());
         }
-        // A gyökérablak (teljes képernyő) lekérése az alapértelmezett kijelzőn
+        // Get the root window for the display
         let root = xlib::XDefaultRootWindow(display);
         if root == 0 {
             xlib::XCloseDisplay(display);
-            return Err("Nem található root window".into());
+            return Err("Root window not found".into());
         }
-        // 1x1 pixeles terület beolvasása a megadott koordinátától
+        // Capture a 1x1 pixel area at the given coordinates
         let img: *mut XImage = xlib::XGetImage(
             display,
             root,
-            x as i32,
-            y as i32,
-            1, 1,    // width=1, height=1
-            !0,      // all planes (~0 = 0xFFFFFFFF mask)
+            x,
+            y,
+            1, 1,
+            !0,
             xlib::ZPixmap,
         );
         if img.is_null() {
             xlib::XCloseDisplay(display);
-            return Err("XGetImage visszatért NULL-lal".into());
+            return Err("XGetImage returned NULL".into());
         }
-        // A pixelt az XImage struktúrából kinyerjük
+        // Extract pixel data
         let pixel = xlib::XGetPixel(img, 0, 0);
-        // Felszabadítjuk az XImage struktúrát a megfelelő függvénnyel
+        // Destroy the XImage
         ((*img).f.destroy_image.expect("destroy_image func"))(img);
         xlib::XCloseDisplay(display);
-        // Az XGetPixel 32-bites pixelértéket ad vissza a kép pixelformatuma szerint (ált. XRGB8888)
+        // Parse 32-bit pixel (XRGB8888 format)
         let r = ((pixel >> 16) & 0xFF) as u8;
         let g = ((pixel >> 8) & 0xFF) as u8;
         let b = (pixel & 0xFF) as u8;
@@ -48,16 +48,15 @@ pub fn get_pixel_color(x: i32, y: i32) -> Result<(u8, u8, u8), String> {
     }
 }
 
+/// Moves the mouse to the specified absolute screen coordinates.
 pub fn move_mouse(x: i32, y: i32) -> Result<(), String> {
     unsafe {
         let display = xlib::XOpenDisplay(ptr::null());
         if display.is_null() {
             return Err("XOpenDisplay failed".into());
         }
-        // Relatív=0 (ez itt irreleváns, mert abszolút koordinátát adunk meg az egész képernyőn)
         let screen_num = xlib::XDefaultScreen(display);
-        // A XTestFakeMotionEvent-nek megadjuk a screen indexet és az abszolút koordinátákat.
-        // A következő paraméter (1) jelzi, hogy relatív mozgás helyett abszolút koordinátát értelmezzen.
+        // Simulate mouse motion event (absolute coordinates)
         let res = xtest::XTestFakeMotionEvent(display, screen_num, x, y, 0);
         xlib::XFlush(display);
         xlib::XCloseDisplay(display);
@@ -69,31 +68,31 @@ pub fn move_mouse(x: i32, y: i32) -> Result<(), String> {
     }
 }
 
+/// Simulates a mouse button press or release (1=left, 2=middle, 3=right).
 pub fn mouse_click(button: u32, press: bool) -> Result<(), String> {
-    // button: 1 = bal gomb, 2 = középső, 3 = jobb gomb (X11 hagyományos számozása)
     unsafe {
         let display = xlib::XOpenDisplay(ptr::null());
         if display.is_null() {
             return Err("XOpenDisplay failed".into());
         }
         let is_press = if press { xlib::True } else { xlib::False };
-        // XTestFakeButtonEvent: gomb lenyomás/felengedés szimulálása
+        // Simulate button event
         let res = xtest::XTestFakeButtonEvent(display, button, is_press, 0);
         xlib::XFlush(display);
         xlib::XCloseDisplay(display);
         if res == 0 {
-            Err("XTestFakeButtonEvent failed".into())
+            return Err("XTestFakeButtonEvent failed".into());
         }
     }
+    // Short delay after press
     if press {
         sleep(Duration::from_millis(10));
     }
     Ok(())
 }
 
+/// Simulates a key press or release using X11 keycodes.
 pub fn key_event(keycode: u32, press: bool) -> Result<(), String> {
-    // keycode: X11 keycode (általában az Xlib keycode, nem pedig XK keysym),
-    // pl. az 'A' betű keycode-ját XKeysymToKeycode segítségével kaphatnánk meg.
     unsafe {
         let display = xlib::XOpenDisplay(ptr::null());
         if display.is_null() {
@@ -104,10 +103,12 @@ pub fn key_event(keycode: u32, press: bool) -> Result<(), String> {
         xlib::XFlush(display);
         xlib::XCloseDisplay(display);
         if res == 0 {
-            Err("XTestFakeKeyEvent failed".into())
+            return Err("XTestFakeKeyEvent failed".into());
         }
     }
+    // Short delay after press
     if press {
         sleep(Duration::from_millis(10));
     }
+    Ok(())
 }

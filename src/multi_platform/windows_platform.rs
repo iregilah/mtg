@@ -1,4 +1,3 @@
-// src/multiplatform/windows_platform.rs
 #![cfg(target_os = "windows")]
 
 use windows::Win32::Foundation::HWND;
@@ -16,46 +15,46 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use std::{mem::size_of, thread::sleep, time::Duration};
 
-
+/// Reads the color of the pixel at (x, y) from the screen.
 pub fn get_pixel_color(x: i32, y: i32) -> Result<(u8, u8, u8), String> {
     unsafe {
-        // Képernyő device context lekérése (NULL handle = teljes desktop)
+        // Get device context for the entire desktop (NULL handle)
         let hdc = GetDC(None);
         if hdc.0.is_null() {
             return Err("GetDC failed".to_string());
         }
-        // Pixel szín lekérése
+        // Read the pixel color
         let color = GetPixel(hdc, x, y);
-            // Release the DC
-            ReleaseDC(None, hdc);
-            // COLORREF.0 a belső u32
-            if color.0 == u32::MAX {
-            // GetPixel hibára u32::MAX (-1) tér vissza
+        // Release the device context
+        ReleaseDC(None, hdc);
+        // COLORREF.0 holds the raw u32 value
+        if color.0 == u32::MAX {
+            // GetPixel returns u32::MAX on failure
             return Err("GetPixel failed".to_string());
         }
-    // A COLORREF.0 formátum: 0x00BBGGRR
-            let raw = color.0;
-            let r = (raw & 0xFF) as u8;
-            let g = ((raw >> 8) & 0xFF) as u8;
-            let b = ((raw >> 16) & 0xFF) as u8;
+        // COLORREF.0 format: 0x00BBGGRR
+        let raw = color.0;
+        let r = (raw & 0xFF) as u8;
+        let g = ((raw >> 8) & 0xFF) as u8;
+        let b = ((raw >> 16) & 0xFF) as u8;
         Ok((r, g, b))
     }
 }
 
+/// Moves the mouse cursor to absolute screen coordinates.
 pub fn move_mouse(x: i32, y: i32) -> Result<(), String> {
-    // Az SetCursorPos az egész képernyő koordináta-rendszerében mozgatja az egeret,
-        // és hibát Result-ként ad vissza.
-        unsafe {
-            SetCursorPos(x, y)
-                .map_err(|e| format!("SetCursorPos failed: {}", e))?;
-        }
-        Ok(())
+    // SetCursorPos moves the cursor using absolute screen coordinates and returns a Result
+    unsafe {
+        SetCursorPos(x, y)
+            .map_err(|e| format!("SetCursorPos failed: {}", e))?;
+    }
+    Ok(())
 }
 
-/// Simulál egy egérkattintást: lenyomás → rövid késleltetés → felengedés
+/// Simulate a mouse click: press → short delay → release
 pub fn mouse_click(left_button: bool) -> Result<(), String> {
     unsafe {
-        // --- Lenézés ---
+        // --- Press down ---
         let mut down: INPUT = std::mem::zeroed();
         down.r#type = INPUT_MOUSE;
         down.Anonymous.mi = MOUSEINPUT {
@@ -71,10 +70,10 @@ pub fn mouse_click(left_button: bool) -> Result<(), String> {
             return Err(format!("SendInput down failed: sent {}", sent_down));
         }
 
-        // Pici szünet, hogy tényleges lenyomásként hasson
+        // Short pause to register the press
         sleep(Duration::from_millis(10));
 
-        // --- Felengedés ---
+        // --- Release ---
         let mut up: INPUT = std::mem::zeroed();
         up.r#type = INPUT_MOUSE;
         up.Anonymous.mi = MOUSEINPUT {
@@ -94,10 +93,10 @@ pub fn mouse_click(left_button: bool) -> Result<(), String> {
     }
 }
 
-/// Simulál egy billentyűnyomást: lenyomás → rövid késleltetés → felengedés
+/// Simulate a key press: down → short delay → up
 pub fn key_press(vk: VIRTUAL_KEY) -> Result<(), String> {
     unsafe {
-        // Len yomás
+        // Press down
         let mut down: INPUT = std::mem::zeroed();
         down.r#type = INPUT_KEYBOARD;
         down.Anonymous.ki = KEYBDINPUT {
@@ -112,10 +111,10 @@ pub fn key_press(vk: VIRTUAL_KEY) -> Result<(), String> {
             return Err(format!("SendInput key_down failed: sent {}", sent_down));
         }
 
-        // Rövid pauza, hogy a rendszer érzékelje a lenyomást
+        // Short pause to ensure the system registers the press
         sleep(Duration::from_millis(10));
 
-        // Felengedés
+        // Release key
         let mut up: INPUT = std::mem::zeroed();
         up.r#type = INPUT_KEYBOARD;
         up.Anonymous.ki = KEYBDINPUT {
@@ -133,6 +132,8 @@ pub fn key_press(vk: VIRTUAL_KEY) -> Result<(), String> {
         Ok(())
     }
 }
+
+/// KEYEVENTF_KEYUP indicates a key release event.
 pub fn key_release(vkey: VIRTUAL_KEY) -> Result<(), String> {
     unsafe {
         let mut input: INPUT = std::mem::zeroed();
@@ -140,7 +141,7 @@ pub fn key_release(vkey: VIRTUAL_KEY) -> Result<(), String> {
         input.Anonymous.ki = KEYBDINPUT {
             wVk: vkey,
             wScan: 0,
-            dwFlags: KEYEVENTF_KEYUP,  // KEYEVENTF_KEYUP = felengedés jelzés
+            dwFlags: KEYEVENTF_KEYUP,  // KEYEVENTF_KEYUP indicates key release
             time: 0,
             dwExtraInfo: 0,
         };
