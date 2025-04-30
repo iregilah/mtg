@@ -1,10 +1,6 @@
 // app/bot.rs
-use crate::multi_platform::{screen_size, windows_platform};
-#[cfg(target_os = "linux")]
-use crate::multi_platform::x11_platform;
-#[cfg(all(target_os = "linux", not(feature = "force_x11")))]
-use crate::multi_platform::wayland_platform;
 
+use crate::multiplatform::screen_size;
 use crate::app::gre::Gre;
 use crate::app::card_attribute::Damage;
 use crate::app::card_attribute::Effect;
@@ -383,7 +379,7 @@ impl Bot {
     pub fn process_creature_casting(&mut self) {
         if self.land_number > 0 {
             let card_library = build_card_library();
-            let creature_exists = self.cards_texts.iter().any(|text| {
+             let creature_exists = self.cards_texts.iter().any(|text| {
                 card_library.values().any(|card| {
                     if let CardType::Creature(_) = card.card_type {
                         Bot::text_contains(&card.name, text)

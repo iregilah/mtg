@@ -1,38 +1,14 @@
 // app/ui.rs
 
-use tracing::{debug, error, info};
-
-use std::{
-    thread::sleep,
-    time::Duration,
-};
-
+use crate::multiplatform::send_key;
+use crate::multiplatform::click_left;
+use crate::multiplatform::move_cursor;
+use crate::multiplatform::get_pixel;
+use tracing::{debug, info, error};
+use std::{thread::sleep, time::Duration};
 use screenshots::Screen;
-use image::DynamicImage;
-
-use image::{ImageBuffer, Rgba};
-
+use image::{DynamicImage, ImageBuffer, Rgba};
 use chrono::Local;
-use crate::multi_platform::{click_left, get_pixel, move_cursor, send_key, windows_platform};
-#[cfg(target_os = "linux")]
-use crate::multi_platform::x11_platform;
-#[cfg(all(target_os = "linux", not(feature = "x11")))]
-use crate::multi_platform::wayland_platform;
-
-#[cfg(target_os = "windows")]
-use {
-    std::ffi::OsStr,
-    std::os::windows::ffi::OsStrExt,
-    windows::core::PCWSTR,
-    windows::Win32::Foundation::HWND,
-    windows::Win32::UI::WindowsAndMessaging::FindWindowW,
-};
-
-#[cfg(not(target_os = "windows"))]
-use {
-    x11::xlib,
-    std::{ffi::CStr, ptr, slice},
-};
 
 /// Represents an RGB color.
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -45,9 +21,12 @@ pub struct Color {
 /// Retrieves the color of the pixel at (x, y).
 pub fn get_color(x: i32, y: i32) -> Color {
     match get_pixel(x, y) {
-        Ok((r, g, b)) => Color { r, g, b },
+        Ok((r, g, b)) => {
+            debug!("[get_color] Pixel @({}, {}) = ({},{},{})", x, y, r, g, b);
+            Color { r, g, b }
+        }
         Err(e) => {
-            error!("get_color error: {}", e);
+            error!("[get_color] Error reading pixel @({}, {}): {}", x, y, e);
             Color { r: 0, g: 0, b: 0 }
         }
     }
@@ -60,11 +39,10 @@ pub fn get_average_color(x: i32, y: i32, width: i32, height: i32) -> (u8, u8, u8
     let mut g_total: u32 = 0;
     let mut b_total: u32 = 0;
     let mut count = 0;
-    for i in 0..width {
-        for j in 0..height {
-            let col = get_color(x + i, y + j);
-            // Debug log minden egyes pixelért (ez info vagy debug szintű lehet, ha túl sok)
-            debug!("Pixel at ({}, {}) has color: {:?}", x + i, y + j, col);
+    for dx in 0..width {
+        for dy in 0..height {
+            let col = get_color(x + dx, y + dy);
+            debug!("Pixel at ({}, {}) has color: {:?}", x + dx, y + dy, col);
             r_total += col.r as u32;
             g_total += col.g as u32;
             b_total += col.b as u32;
@@ -85,11 +63,11 @@ pub fn get_average_color(x: i32, y: i32, width: i32, height: i32) -> (u8, u8, u8
 
 /// Checks if two colors are within a tolerance based on channel ratios.
 pub fn is_color_within_tolerance(color: (u8, u8, u8), target: (u8, u8, u8), tol: f64) -> bool {
-    // Konvertáljuk a bemeneti értékeket f64-esre
+    // Convert channels to f64
     let (r, g, b) = (color.0 as f64, color.1 as f64, color.2 as f64);
     let (tr, tg, tb) = (target.0 as f64, target.1 as f64, target.2 as f64);
 
-    // Számoljuk ki a három arányt, elkerülve a zéróval való osztást
+    // Compute ratios safely
     let ratio_rg = if g != 0.0 { r / g } else { 0.0 };
     let ratio_gb = if b != 0.0 { g / b } else { 0.0 };
     let ratio_rb = if b != 0.0 { r / b } else { 0.0 };
@@ -98,7 +76,7 @@ pub fn is_color_within_tolerance(color: (u8, u8, u8), target: (u8, u8, u8), tol:
     let target_ratio_gb = if tb != 0.0 { tg / tb } else { 0.0 };
     let target_ratio_rb = if tb != 0.0 { tr / tb } else { 0.0 };
 
-    // Számoljuk ki az arányok közötti abszolút különbségeket
+    // Calculate the absolute differences between the ratios
     let diff_rg = (ratio_rg - target_ratio_rg).abs();
     let diff_gb = (ratio_gb - target_ratio_gb).abs();
     let diff_rb = (ratio_rb - target_ratio_rb).abs();
@@ -121,7 +99,7 @@ pub fn is_color_within_tolerance(color: (u8, u8, u8), target: (u8, u8, u8), tol:
 /// Moves the cursor to (x, y).
 pub fn set_cursor_pos(x: i32, y: i32) {
     if let Err(e) = move_cursor(x, y) {
-        error!("set_cursor_pos error: {}", e);
+        error!("[set_cursor_pos] Error: {}", e);
     }
     sleep(Duration::from_millis(100));
 }
@@ -136,7 +114,7 @@ pub fn left_click() {
 
 /// Simulates a key press + release.
 pub fn press_key(keycode: u32) {
-    if let Err(e) = send_key(keycode) {
+    if let Err(e) = send_key(enigo::Key::Other(keycode)) {
         error!("press_key error: {}", e);
     }
     sleep(Duration::from_millis(100));
@@ -144,20 +122,35 @@ pub fn press_key(keycode: u32) {
 
 /// Takes a screenshot of the primary monitor and saves it with a timestamp.
 pub fn make_screenshot() {
-    if let Ok(screens) = Screen::all() {
-        if let Some(screen) = screens.first() {
-            if let Ok(buffer) = screen.capture() {
-                let now = Local::now();
-                let filename = format!("screenshot_{}.png", now.format("%Y-%m-%d_%H-%M"));
-                let (w, h) = (buffer.width(), buffer.height());
-                if let Some(img_buf) = ImageBuffer::<Rgba<u8>, _>::from_raw(w, h, buffer.into_raw()) {
-                    let img = DynamicImage::ImageRgba8(img_buf);
-                    let _ = img.save(&filename);
-                } else {
-                    error!("make_screenshot: buffer size mismatch");
+    match Screen::all() {
+        Ok(screens) => {
+            if let Some(screen) = screens.first() {
+                match screen.capture() {
+                    Ok(buffer) => {
+                        let now = Local::now();
+                        let filename = format!("screenshot_{}.png", now.format("%Y-%m-%d_%H-%M"));
+                        let (w, h) = (buffer.width(), buffer.height());
+                        match ImageBuffer::<Rgba<u8>, _>::from_raw(w, h, buffer.into_raw()) {
+                            Some(img_buf) => {
+                                let img = DynamicImage::ImageRgba8(img_buf);
+                                if let Err(e) = img.save(&filename) {
+                                    error!("[make_screenshot] Save failed: {}", e);
+                                } else {
+                                    info!("[make_screenshot] Saved {}", filename);
+                                }
+                            }
+                            None => {
+                                error!("[make_screenshot] Buffer size mismatch {}×{}", w, h);
+                            }
+                        }
+                    }
+                    Err(e) => error!("[make_screenshot] Capture failed: {}", e),
                 }
+            } else {
+                error!("[make_screenshot] No screens available");
             }
         }
+        Err(e) => error!("[make_screenshot] Screen enumeration failed: {}", e),
     }
 }
 
@@ -192,78 +185,15 @@ impl Cords {
 
 /// Returns "red", "blue" or "black" based on the attack button color.
 pub fn check_button_color(cords: &Cords) -> &'static str {
-    let color = get_color(cords.attack_button.0, cords.attack_button.1);
-    if color.r > 200 {
+    let (x, y) = cords.attack_button;
+    let c = get_color(x, y);
+    info!("[check_button_color] Pixel @({}, {}) = {:?}", x, y, c);
+    if c.r > 200 {
         "red"
-    } else if color.b > 200 {
+    } else if c.b > 200 {
         "blue"
     } else {
         "black"
-    }
-}
-
-/// Finds a window by its title.
-///
-/// On Windows uses the `windows` crate; on Linux/X11 (and XWayland)
-/// it enumerates X11 children and matches by window name.
-#[cfg(target_os = "windows")]
-pub fn find_window(title: &str) -> Option<HWND> {
-    // Build a null-terminated UTF-16 string
-    let wide: Vec<u16> = OsStr::new(title)
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    let pw = PCWSTR(wide.as_ptr());
-
-    // Most már Result<HWND, Error>
-    let res = unsafe { FindWindowW(None, pw) };
-    match res {
-               Ok(hwnd) if !hwnd.0.is_null() => Some(hwnd),  // megtaláltuk, és nem null pointer
-        Ok(_) | Err(_)          => None,         // hiba vagy null handle
-    }
-}
-#[cfg(not(target_os = "windows"))]
-pub fn find_window(title: &str) -> Option<()> {
-    unsafe {
-        // Connect to the X server
-        let display = xlib::XOpenDisplay(ptr::null());
-        if display.is_null() {
-            return None;
-        }
-        let root = xlib::XDefaultRootWindow(display);
-
-        // Query the window tree
-        let mut root_ret = 0;
-        let mut parent_ret = 0;
-        let mut children_ptr: *mut xlib::Window = ptr::null_mut();
-        let mut nchildren: u32 = 0;
-        if xlib::XQueryTree(
-            display,
-            root,
-            &mut root_ret,
-            &mut parent_ret,
-            &mut children_ptr,
-            &mut nchildren,
-        ) == 0 {
-            xlib::XCloseDisplay(display);
-            return None;
-        }
-
-        let children = slice::from_raw_parts(children_ptr, nchildren as usize);
-        for &w in children {
-            let mut name_ptr: *mut i8 = ptr::null_mut();
-            if xlib::XFetchName(display, w, &mut name_ptr) != 0 && !name_ptr.is_null() {
-                let name = CStr::from_ptr(name_ptr).to_string_lossy();
-                xlib::XFree(name_ptr as *mut _);
-                if name.contains(title) {
-                    xlib::XCloseDisplay(display);
-                    return Some(());
-                }
-            }
-        }
-
-        xlib::XCloseDisplay(display);
-        None
     }
 }
 

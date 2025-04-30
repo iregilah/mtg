@@ -57,7 +57,7 @@ impl App {
                 break;
             }
 
-            // 3) Check for a phase change
+            // 3) Check for a phase change *és csak akkor* lépjünk tovább a state machine-ben
             let next_phase = self.state.phase();
             if next_phase != current_phase {
                 info!("Phase change: {:?} -> {:?}", current_phase, next_phase);
@@ -67,12 +67,18 @@ impl App {
                     self.bot.gre.priority,
                 );
                 current_phase = next_phase;
+
+                // Mielőtt frissítenénk a GameState-et, ugorjunk át az új State-re
+                info!("App: Requesting next state from current state.");
+                let next = self.state.next();
+                info!("App: Transitioning to new state.");
+                self.state = next;
             }
 
             // 4) Resolve the GRE stack
             self.bot.gre.resolve_stack();
 
-            // New: centralized GameState update
+            // 5) Frissítsük a GameState-et (OCR, stb.) mindig az aktuális state után
             updater.refresh_all(
                 self.bot.screen_width as u32,
                 self.bot.screen_height as u32,
@@ -82,11 +88,7 @@ impl App {
                 self.bot.land_played_this_turn,
                 &self.bot.gre.stack,
             );
-            // App is responsible for integrating the GameState
             self.bot.updater.state = updater.state.clone();
-
-            // 5) Transition to the next state if needed
-            self.next_state();
         }
     }
 

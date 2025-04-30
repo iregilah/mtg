@@ -69,7 +69,7 @@ pub fn detect_creature_count_for_side(
     let center_x = (screen_width as i32) / 2 - rect_w / 2;
 
     let target_color = (210, 175, 157);
-    let tol = 0.035;
+        let tol = 0.035;
 
     let center_color = get_average_color(center_x, y1, rect_w, region_h);
     info!("  center color: {:?}", center_color);
