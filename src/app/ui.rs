@@ -34,30 +34,45 @@ pub fn get_color(x: i32, y: i32) -> Color {
 
 /// Computes the average color over a rectangular region starting at (x, y).
 pub fn get_average_color(x: i32, y: i32, width: i32, height: i32) -> (u8, u8, u8) {
-    info!("get_average_color() called with x = {}, y = {}, width = {}, height = {}", x, y, width, height);
-    let mut r_total: u32 = 0;
-    let mut g_total: u32 = 0;
-    let mut b_total: u32 = 0;
-    let mut count = 0;
-    for dx in 0..width {
-        for dy in 0..height {
-            let col = get_color(x + dx, y + dy);
-            debug!("Pixel at ({}, {}) has color: {:?}", x + dx, y + dy, col);
-            r_total += col.r as u32;
-            g_total += col.g as u32;
-            b_total += col.b as u32;
-            count += 1;
-        }
+    // 1) from_point i32-et vár
+    let screen = Screen::from_point(x, y)
+        .expect("Nem található képernyő a megadott koordinátán");
+
+    // 2) clamp x,y negatív esetet, de maradjon i32
+    let xi = x.max(0);
+    let yi = y.max(0);
+
+    // 3) width,height legyen u32 a capture_area-hoz
+    let wu = width.max(0) as u32;
+    let hu = height.max(0) as u32;
+
+    // 4) most már megfelelő típusokkal hívjuk
+    let image = screen
+        .capture_area(xi, yi, wu, hu)
+        .expect("Nem sikerült a képernyőrészlet rögzítése");
+
+    // 5) a visszakapott ImageBuffer-ből nyers RGBA-bytek
+    let raw = image.into_raw();
+
+    // 6) összegzés csatornánként
+    let mut sum_r = 0u64;
+    let mut sum_g = 0u64;
+    let mut sum_b = 0u64;
+    for chunk in raw.chunks(4) {
+        sum_r += chunk[0] as u64;
+        sum_g += chunk[1] as u64;
+        sum_b += chunk[2] as u64;
     }
+
+    // 7) átlagolás és visszaadás
+    let count = (wu as u64).saturating_mul(hu as u64);
     if count == 0 {
-        error!("get_average_color(): count = 0, returning (0, 0, 0)");
-        return (0, 0, 0);
+        (0, 0, 0)
+    } else {
+        ((sum_r / count) as u8,
+         (sum_g / count) as u8,
+         (sum_b / count) as u8)
     }
-    let avg_r = (r_total / count) as u8;
-    let avg_g = (g_total / count) as u8;
-    let avg_b = (b_total / count) as u8;
-    info!("get_average_color() returning average color: ({}, {}, {})", avg_r, avg_g, avg_b);
-    (avg_r, avg_g, avg_b)
 }
 
 

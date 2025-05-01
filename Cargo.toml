@@ -30,6 +30,7 @@ time = "0.3.39"
 winapi = "0.3.9"
 libc = "0.2.170"
 enigo = "0.3.0"
+xcap = "0.5.1"
 
 [features]
 # Default feature flag includes the Wayland feature

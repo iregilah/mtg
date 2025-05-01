@@ -1,5 +1,6 @@
 // app/state/first_main_phase_state.rs
 
+use std::any::Any;
 //use std::{thread::sleep, time::Duration};
 use crate::app::error::AppError;
 use tracing::warn;
@@ -15,6 +16,7 @@ use crate::app::{
         opponents_turn_state::OpponentsTurnState,
     },
 };
+use crate::app::card_attribute::HasteAttribute;
 use crate::app::game_state_updater::load_side_creatures;
 
 pub struct FirstMainPhaseState {
@@ -117,10 +119,27 @@ impl FirstMainPhaseState {
 
                 // insert new creature tapped
                 if let Some(mut card) = library.get(&name).cloned() {
+                    // 1) insert tapped
                     if let CardType::Creature(ref mut cr) = card.card_type {
                         cr.summoning_sickness = true;
                     }
-                    bot.battlefield_creatures.insert(key, card);
+                    bot.battlefield_creatures.insert(key.clone(), card.clone());
+
+                    // 2) immediately clear summoning sickness if it has haste
+                    if let Some(entry) = bot.battlefield_creatures.get_mut(&key) {
+                        let has_haste = entry
+                            .attributes
+                            .iter()
+                            .any(|attr| {
+                                let a: &dyn Any = attr.as_ref();
+                                a.is::<HasteAttribute>()
+                            });
+                        if has_haste {
+                            if let CardType::Creature(ref mut cr) = entry.card_type {
+                                cr.summoning_sickness = false;
+                            }
+                        }
+                    }
                 }
 
                 info!(

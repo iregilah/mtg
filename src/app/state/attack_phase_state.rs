@@ -11,8 +11,9 @@ use crate::app::{
     bot::Bot,
     ocr::check_main_region_text,
     state::{State, second_main_phase_state::SecondMainPhaseState},
-    ui::press_key,
+    ui::{set_cursor_pos, left_click},
 };
+use crate::app::ui::check_button_color;
 
 pub struct AttackPhaseState {
     no_attack: bool,
@@ -48,8 +49,9 @@ impl State<AppError> for AttackPhaseState {
 
 impl AttackPhaseState {
     fn is_attackers_text(s: &str) -> bool {
+        // match “1 Attacker” or “2 or more Attackers”, in any case, with optional surrounding whitespace
         let re = Regex::new(r"^\s*\d+\s+Attackers?\s*$").unwrap();
-        let result = re.is_match(s);
+        let result = re.is_match(s.trim());
         info!("is_attackers_text(): input = {:?}, matches regex: {}", s, result);
         result
     }
@@ -90,29 +92,36 @@ impl AttackPhaseState {
                     .collect();
                 info!("Attacking creatures: {:?}", bot.attacking);
 
-                press_key(0x20); // Space
+                let (x, y) = bot.cords.attack_button;
+                set_cursor_pos(x, y);
+                left_click();
                 sleep(Duration::from_secs(1));
                 break;
             }
             if main_text.contains("Next") {
-                press_key(0x20);
+                let (x, y) = bot.cords.attack_button;
+                set_cursor_pos(x, y);
+                left_click();
                 sleep(Duration::from_secs(1));
             } else {
                 sleep(Duration::from_secs(2));
             }
         }
 
-        // 2) Wait for "X Attackers" on white button
+        // 2) Wait for "X Attackers"
         loop {
+            let is_red = check_button_color(&bot.cords) == "red";
             let main_text = check_main_region_text(
                 bot.screen_width as u32,
                 bot.screen_height as u32,
-                false,
+                is_red,
             );
             info!("(Attack phase - white) Main region text: {}", main_text);
 
             if Self::is_attackers_text(&main_text) {
-                press_key(0x20);
+                let (x, y) = bot.cords.attack_button;
+                set_cursor_pos(x, y);
+                left_click();
                 sleep(Duration::from_secs(1));
                 break;
             } else {
@@ -130,7 +139,9 @@ impl AttackPhaseState {
             info!("(Attack phase - post-attack Next loop) Main region text: {}", main_text);
 
             if main_text.contains("Next") {
-                press_key(0x20);
+                let (x, y) = bot.cords.attack_button;
+                set_cursor_pos(x, y);
+                left_click();
                 sleep(Duration::from_secs(1));
             } else {
                 break;

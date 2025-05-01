@@ -302,6 +302,18 @@ pub fn build_card_library() -> HashMap<String, Card> {
         ],
     });
 
+    lib.insert("Mountain".into(), Card {
+        name: "Mountain".into(),
+        card_type: CardType::Land,
+        mana_cost: ManaCost::default(),
+        attributes: vec![
+            Box::new(AddManaAbility { mana_type: "Red".into(), condition: ManaCondition::Any }),
+        ],
+        triggers: vec![
+            Trigger::Custom("AddRedMana".into()),
+        ],
+    });
+
 
     lib
 }

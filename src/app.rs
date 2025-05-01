@@ -42,38 +42,38 @@ pub struct App {
 
 impl App {
     pub fn start(&mut self) {
-        // 1) Kezeljük egyszer a StartState-et
+
         info!("App: Running StartState...");
         if let Err(e) = self.state.update(&mut self.bot) {
             tracing::error!("Error in StartState: {:?}", e);
             return;
         }
-        tracing::info!("App: Transitioning from StartState to MulliganState...");
+        info!("App: Transitioning from StartState to MulliganState...");
         self.state = self.state.next();
 
-        // 2) Mostantól a normál játékmenet jön
+
         let mut current_phase = self.state.phase();
         let mut updater = GameStateUpdater::new();
 
         loop {
-            // 2.1) Dispatch delayed effects
+
             self.bot.gre.dispatch_delayed(current_phase);
 
-            // 2.2) Update current state
+
             if let Err(e) = self.state.update(&mut self.bot) {
                 tracing::error!("App error during state update: {:?}", e);
                 break;
             }
 
-             // 2.3) Állapottransition minden kör végén (régi kód viselkedése szerint)
+
                 info!("App: Transitioning to next state...");
                 self.next_state();
                 current_phase = self.state.phase();
 
-            // 2.4) GRE stack feloldása
+
             self.bot.gre.resolve_stack();
 
-            // 2.5) (Opcionális) GameState szinkronizáció
+
             self.bot.updater.state = updater.state.clone();
         }
     }

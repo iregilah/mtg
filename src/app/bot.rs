@@ -121,7 +121,7 @@ impl Bot {
 
     /// Draw exactly one card, OCR it, update hand and GameState.
     pub fn draw_card(&mut self) {
-        let new_index = self.card_count;
+        let new_index = self.cards_texts.len();
         let new_count = new_index + 1;
         let positions = get_card_positions(new_count, self.screen_width as u32);
         let pos = positions[new_index];
@@ -158,6 +158,7 @@ impl Bot {
                 info!("Playing land at hand idx {}", idx);
                 Self::play_card(self, idx);
                 self.land_played_this_turn = true;
+                self.land_count += 1;
                 self.land_number += 1;
                 self.cards_texts.remove(idx);
                 self.card_count = self.cards_texts.len();
@@ -379,7 +380,7 @@ impl Bot {
     pub fn process_creature_casting(&mut self) {
         if self.land_number > 0 {
             let card_library = build_card_library();
-             let creature_exists = self.cards_texts.iter().any(|text| {
+            let creature_exists = self.cards_texts.iter().any(|text| {
                 card_library.values().any(|card| {
                     if let CardType::Creature(_) = card.card_type {
                         Bot::text_contains(&card.name, text)
