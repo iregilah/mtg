@@ -123,27 +123,24 @@ impl Bot {
     pub fn draw_card(&mut self) {
         let new_index = self.cards_texts.len();
         let new_count = new_index + 1;
+
         let positions = get_card_positions(new_count, self.screen_width as u32);
         let pos = positions[new_index];
         let card_y = ((self.screen_height as f64) * 0.97).floor() as i32;
-
         info!("Drawing → hovering new slot at index {} @ {:?}", new_index, pos);
         set_cursor_pos(pos.hover_x as i32, card_y);
         sleep(Duration::from_secs(2));
 
-        // OCR the new card
-        let text = {
-            let old = self.card_count;
-            self.card_count = new_count;
-            let t = get_card_text(new_index, new_count, self.screen_width as u32, self.screen_height as u32);
-            self.card_count = old;
-            t
-        };
+        let text = get_card_text(
+            new_index,
+            new_count,
+            self.screen_width as u32,
+            self.screen_height as u32,
+        );
 
-        // Update Bot state
+        // most frissítjük az állapotot
         self.cards_texts.push(text.clone());
         self.card_count = self.cards_texts.len();
-
 
         info!("Drew card '{}' → Updated hand: {:?}", text, self.cards_texts);
     }

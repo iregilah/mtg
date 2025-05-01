@@ -22,7 +22,7 @@ impl OpponentsTurnState {
 
 impl State<AppError> for OpponentsTurnState {
     fn update(&mut self, bot: &mut Bot) -> Result<(), AppError> {
-        bot.land_played_this_turn = false;
+        bot.on_turn_end();
         info!("OpponentsTurnState: handling opponent's turn.");
         Self::process_opponents_turn(self, bot);
 
