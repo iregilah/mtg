@@ -86,12 +86,14 @@ impl MulliganState {
         if bot.card_count == 8 {
             info!("Opponent started; waiting for 'Next' to hover cards.");
             loop {
+
                 let is_red = check_button_color(&bot.cords) == "red";
                 let txt = check_main_region_text(
                     bot.screen_width as u32,
                     bot.screen_height as u32,
                     is_red,
                 );
+
                 if txt.contains("Next") {
                     info!("Detected 'Next'; proceeding to hover cards.");
                     break;

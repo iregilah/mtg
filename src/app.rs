@@ -42,52 +42,38 @@ pub struct App {
 
 impl App {
     pub fn start(&mut self) {
-        // Initial phase
+        // 1) Kezeljük egyszer a StartState-et
+        info!("App: Running StartState...");
+        if let Err(e) = self.state.update(&mut self.bot) {
+            tracing::error!("Error in StartState: {:?}", e);
+            return;
+        }
+        tracing::info!("App: Transitioning from StartState to MulliganState...");
+        self.state = self.state.next();
+
+        // 2) Mostantól a normál játékmenet jön
         let mut current_phase = self.state.phase();
         let mut updater = GameStateUpdater::new();
 
-        // Main run loop
         loop {
-            // 1) Dispatch delayed effects for the current phase
+            // 2.1) Dispatch delayed effects
             self.bot.gre.dispatch_delayed(current_phase);
 
-            // 2) Update the state
+            // 2.2) Update current state
             if let Err(e) = self.state.update(&mut self.bot) {
-                error!("App error during state update: {:?}", e);
+                tracing::error!("App error during state update: {:?}", e);
                 break;
             }
 
-            // 3) Check for a phase change *és csak akkor* lépjünk tovább a state machine-ben
-            let next_phase = self.state.phase();
-            if next_phase != current_phase {
-                info!("Phase change: {:?} -> {:?}", current_phase, next_phase);
-                self.bot.gre.trigger_event(
-                    GameEvent::PhaseChange(next_phase),
-                    &mut Vec::new(),
-                    self.bot.gre.priority,
-                );
-                current_phase = next_phase;
+             // 2.3) Állapottransition minden kör végén (régi kód viselkedése szerint)
+                info!("App: Transitioning to next state...");
+                self.next_state();
+                current_phase = self.state.phase();
 
-                // Mielőtt frissítenénk a GameState-et, ugorjunk át az új State-re
-                info!("App: Requesting next state from current state.");
-                let next = self.state.next();
-                info!("App: Transitioning to new state.");
-                self.state = next;
-            }
-
-            // 4) Resolve the GRE stack
+            // 2.4) GRE stack feloldása
             self.bot.gre.resolve_stack();
 
-            // 5) Frissítsük a GameState-et (OCR, stb.) mindig az aktuális state után
-            updater.refresh_all(
-                self.bot.screen_width as u32,
-                self.bot.screen_height as u32,
-                &self.bot.cards_texts,
-                &build_card_library(),
-                self.bot.land_number,
-                self.bot.land_played_this_turn,
-                &self.bot.gre.stack,
-            );
+            // 2.5) (Opcionális) GameState szinkronizáció
             self.bot.updater.state = updater.state.clone();
         }
     }
