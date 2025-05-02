@@ -51,6 +51,7 @@ pub enum Trigger {
     OnSpellCast,
     EndOfTurn,
     Custom(String),
+    BeginUpkeep,
 }
 
 /// A plain delta to a creature’s own power/toughness.

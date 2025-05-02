@@ -1,7 +1,10 @@
 // tests/card_attribute_tests.rs
 
 use MTGA_me::app::card_attribute::*;
-use MTGA_me::app::game_state::GamePhase;
+use MTGA_me::app::card_library::{Card, CardType, Instant_, ManaCost};
+use MTGA_me::app::game_state::{GamePhase, GameState};
+use MTGA_me::app::gre::Gre;
+use MTGA_me::app::gre::StackEntry::Spell;
 
 #[test]
 fn test_modify_attack_defense() {
@@ -12,7 +15,7 @@ fn test_modify_attack_defense() {
 
 #[test]
 fn test_poliferate_on_damage() {
-    let mut attr = PoliferateOnDamage;
+    let mut attr = Poliferate;
     assert!(attr.on_trigger(&Trigger::OnCombatDamage).is_some());
     assert!(attr.on_trigger(&Trigger::OnDeath).is_none());
 }

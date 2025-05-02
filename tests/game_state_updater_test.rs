@@ -1,5 +1,7 @@
 // tests/game_state_updater_tests.rs
 
+use std::collections::BinaryHeap;
+use MTGA_me::app::card_attribute::{Effect, Trigger};
 use MTGA_me::app::game_state_updater::GameStateUpdater;
 use MTGA_me::app::game_state::{GameState, Player, StackEntry, GamePhase, GameEvent};
 use MTGA_me::app::card_library::{build_card_library, Card};

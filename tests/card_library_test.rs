@@ -1,6 +1,9 @@
 // tests/card_library_tests.rs
 
-use MTGA_me::app::card_library::{build_card_library, CardType, ManaCost};
+use MTGA_me::app::card_attribute::{Damage, DamageEqualPowerOnDeath, DelayedCounterAttribute, Effect, ModifyAttackDefense, SpawnTokenOnDeath, TargetFilter, Trigger};
+use MTGA_me::app::card_library::{build_card_library, Card, CardType, Creature, Instant_, ManaCost};
+use MTGA_me::app::game_state::{GameEvent, GamePhase, Player};
+use MTGA_me::app::gre::{Gre, StackEntry};
 
 #[test]
 fn library_initialization_integrity() {

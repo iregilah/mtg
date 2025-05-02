@@ -5,6 +5,8 @@ use MTGA_me::app::game_state::*;
 use MTGA_me::app::card_library::{build_card_library, Card, CardType, ManaCost};
 use MTGA_me::app::gre::{PriorityEntry, StackEntry};
 use MTGA_me::app::bot::Bot;
+use MTGA_me::app::card_attribute::{Effect, Trigger};
+use MTGA_me::app::gre::StackEntry::Spell;
 
 #[test]
 fn test_player_opponent() {
