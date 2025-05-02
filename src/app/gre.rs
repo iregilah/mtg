@@ -1,6 +1,8 @@
+// src/app/gre.rs
+
 use std::collections::{BinaryHeap, HashSet};
 use crate::app::game_state::{GameEvent, GamePhase, Player};
-use crate::app::card_attribute::{Effect, Trigger};
+use crate::app::card_attribute::{Effect, Trigger, TargetFilter, PlayerSelector};
 use crate::app::card_library::Card;
 use tracing::info;
 
@@ -150,11 +152,11 @@ impl Gre {
         let mut batch = Vec::new();
         for card in battlefield.iter_mut() {
             let effects = match &event {
-                GameEvent::SpellResolved(name) => card.trigger_by(&Trigger::Custom(format!("OnCastResolved:{}", name))),
-                GameEvent::CreatureDied(_) => card.trigger_by(&Trigger::OnDeath),
-                GameEvent::TurnEnded => card.trigger_by(&Trigger::EndOfTurn),
-                GameEvent::Custom(s) => card.trigger_by(&Trigger::Custom(s.clone())),
-                GameEvent::PhaseChange(p) => card.trigger_by(&Trigger::Custom(format!("PhaseChange:{:?}", p))),
+                GameEvent::SpellResolved(_) => card.trigger_by(&Trigger::OnCastResolved),
+                GameEvent::CreatureDied(_) => card.trigger_by(&Trigger::OnDeath { filter: TargetFilter::SelfCard }),
+                GameEvent::TurnEnded => card.trigger_by(&Trigger::AtBeginPhase { phase: GamePhase::End, player: PlayerSelector::AnyPlayer }),
+                GameEvent::PhaseChange(p) => card.trigger_by(&Trigger::AtBeginPhase { phase: *p, player: PlayerSelector::AnyPlayer }),
+                _ => Vec::new(),
             };
             for eff in effects {
                 batch.push((card.clone(), eff));
@@ -168,8 +170,8 @@ impl Gre {
                     info!("Scheduled delayed effect id {} from trigger", id);
                 }
                 eff => {
-                    let prio = match eff {
-                        Effect::SelfAttributeChange(_) | Effect::Poliferate { .. } => 2,
+                    let prio = match &eff {
+                        Effect::ModifyStats { .. } | Effect::Proliferate { .. } => 2,
                         _ => 1,
                     };
                     self.push(StackEntry::TriggeredAbility { source: Some(source), effect: eff, controller }, prio);
@@ -178,26 +180,12 @@ impl Gre {
         }
     }
 
-    /// Player passes priority. After two passes, resolve the top of the stack.
-    pub fn pass_priority(&mut self) {
-        self.passes += 1;
-        if self.passes >= 2 {
-            self.resolve_stack();
-            self.reset_priority();
-        } else {
-            self.priority = self.priority.opponent();
-            info!("Priority passed to {:?}", self.priority);
-        }
-    }
-
     /// Register a replacement effect with priority.
-    /// Higher priority replacers run first and can override lower-priority ones.
     pub fn add_replacement_effect<F>(&mut self, priority: u8, f: F)
     where
         F: 'static + Fn(&Effect) -> Option<Vec<Effect>>,
     {
         self.replacement_effects.push(ReplacementEffect { priority, f: Box::new(f) });
-        // Keep highest priority first
         self.replacement_effects.sort_by(|a, b| b.priority.cmp(&a.priority));
     }
 
@@ -211,13 +199,11 @@ impl Gre {
 
     /// Handle an effect: apply replacement chaining, continuous effects, then execute.
     pub fn handle_effect(&mut self, effect: Effect) {
-        // 1) Replacement chaining
         let replaced = if self.replacement_effects.is_empty() {
             vec![effect]
         } else {
             self.apply_replacement(&effect, 0)
         };
-        // 2) Continuous modifications
         let mut final_effects = Vec::new();
         for mut e in replaced {
             for cont in &self.continuous_effects {
@@ -225,7 +211,6 @@ impl Gre {
             }
             final_effects.push(e);
         }
-        // 3) Execute each
         for e in final_effects {
             self.execute(e);
         }
@@ -238,12 +223,10 @@ impl Gre {
         }
         let replacer = &self.replacement_effects[idx];
         if let Some(repls) = (replacer.f)(effect) {
-            // If replacer matches, it overrides effect: apply remaining replacers to each replacement
             repls.into_iter()
                 .flat_map(|eff| self.apply_replacement(&eff, idx + 1))
                 .collect()
         } else {
-            // No replacement at this priority: try next
             self.apply_replacement(effect, idx + 1)
         }
     }
@@ -272,34 +255,28 @@ impl Gre {
         }
     }
 
-    /// Reset consecutive pass count without changing priority.
     fn reset_priority(&mut self) {
         self.passes = 0;
     }
 
-    /// Push a new entry onto the stack with given priority.
     fn push(&mut self, entry: StackEntry, priority: u8) {
         let seq = self.sequence;
         self.sequence = self.sequence.wrapping_add(1);
         self.stack.push(PriorityEntry { priority, sequence: seq, entry });
     }
 
-    /// Add an entry to the stack as an activated ability, resetting priority.
     pub fn push_to_stack(&mut self, entry: StackEntry) {
         let prio = if matches!(entry, StackEntry::ActivatedAbility { .. }) { 3 } else { 1 };
         self.push(entry, prio);
         self.reset_priority();
     }
-    /// Resolve just the top entry of the stack.
+
     pub fn resolve_top_of_stack(&mut self) {
         if let Some(pe) = self.stack.pop() {
-            // handle pe.entry similarly to resolve_stack
-            match pe.entry {
-                StackEntry::Spell { .. } | StackEntry::TriggeredAbility { .. } | StackEntry::ActivatedAbility { .. } => {
-                    // For now, just drop it
-                }
+            // drop or handle single entry
+            if let StackEntry::TriggeredAbility { effect, .. } | StackEntry::ActivatedAbility { effect, .. } = pe.entry {
+                self.handle_effect(effect);
             }
         }
     }
-
 }

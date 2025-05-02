@@ -16,7 +16,7 @@ use crate::app::{
         opponents_turn_state::OpponentsTurnState,
     },
 };
-use crate::app::card_attribute::HasteAttribute;
+use crate::app::card_attribute::{GrantAbilityAttribute, KeywordAbility};
 use crate::app::game_state_updater::load_side_creatures;
 
 pub struct FirstMainPhaseState {
@@ -131,8 +131,10 @@ impl FirstMainPhaseState {
                             .attributes
                             .iter()
                             .any(|attr| {
-                                let a: &dyn Any = attr.as_ref();
-                                a.is::<HasteAttribute>()
+                                // coerce the CardAttribute trait object to &dyn Any, then downcast
+                                let any = attr.as_ref() as &dyn Any;
+                                any.downcast_ref::<GrantAbilityAttribute>()
+                                    .map_or(false, |ga| ga.ability == KeywordAbility::Haste)
                             });
                         if has_haste {
                             if let CardType::Creature(ref mut cr) = entry.card_type {

@@ -2,8 +2,7 @@
 
 use crate::multiplatform::screen_size;
 use crate::app::gre::Gre;
-use crate::app::card_attribute::Damage;
-use crate::app::card_attribute::Effect;
+use crate::app::card_attribute::{Amount, Effect};
 use crate::app::game_state::Player;
 use crate::app::game_state::Player as OtherPlayer;
 use crate::app::game_state::GameEvent;
@@ -69,20 +68,15 @@ impl Bot {
         // Build and configure the GRE
         let mut gre = Gre::new(Player::Us);
 
-        // Replacement effect example:
-        gre.add_replacement_effect(10, move |eff| {
-            if let Effect::DestroyTarget { target_filter } = eff {
-                Some(vec![Effect::ExileTarget { target_filter: target_filter.clone() }])
-            } else {
-                None
-            }
-        });
-
-        // Continuous effect example:
+        // Példa: minden damage effektust +1-gyel növelünk
         gre.add_continuous_effect(|eff| {
-            if let Effect::DamageTarget { damage, .. } = eff {
-                let new_amount = damage.amount.saturating_add(1);
-                *damage = Damage { amount: new_amount, special: damage.special.clone() };
+            // klónozzuk, hogy könnyen mintázhassuk
+            if let Effect::Damage { amount: Amount::Fixed(n), target } = eff.clone() {
+                // építsük újra az Effect-et a megváltoztatott mennyiséggel
+                *eff = Effect::Damage {
+                    amount: Amount::Fixed(n + 1),
+                    target,
+                };
             }
         });
 

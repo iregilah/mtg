@@ -1,14 +1,13 @@
 // src/app/state/combat_damage_state.rs
 
-use crate::app::card_attribute::TrampleAttribute;
-use crate::app::card_attribute::DeathtouchAttribute;
-use crate::app::card_attribute::LifelinkAttribute;
+use crate::app::card_attribute::{GrantAbilityAttribute, KeywordAbility};
 use crate::app::error::AppError;
 use crate::app::game_state::{GameEvent, GamePhase, Player};
 use crate::app::bot::Bot;
 use crate::app::state::{second_main_phase_state::SecondMainPhaseState, State};
 use tracing::info;
 use std::any::Any;
+use crate::app::card_library::CardType;
 
 pub struct CombatDamageState;
 
@@ -30,33 +29,30 @@ impl CombatDamageState {
 
         for (i, atk_name) in attackers.iter().enumerate() {
             if let Some(atk_card) = bot.battlefield_creatures.get_mut(atk_name) {
-                if let crate::app::card_library::CardType::Creature(atk_cr) = &mut atk_card.card_type {
+                if let CardType::Creature(atk_cr) = &mut atk_card.card_type {
                     let power = atk_cr.power as u32;
-                    // Detect abilities by attribute string matching
-                    let has_lifelink = atk_card.attributes.iter()
-                        .any(|a| {
-                            // a: &Box<dyn CardAttribute>
-                            let any: &dyn Any = a.as_ref(); // &dyn CardAttribute  →  &dyn Any
-                            any.downcast_ref::<LifelinkAttribute>().is_some()
-                        });
 
-                    let has_deathtouch = atk_card.attributes.iter()
-                        .any(|a| {
-                            let any: &dyn Any = a.as_ref();
-                            any.downcast_ref::<DeathtouchAttribute>().is_some()
-                        });
-
-                    let has_trample = atk_card.attributes.iter()
-                        .any(|a| {
-                            let any: &dyn Any = a.as_ref();
-                            any.downcast_ref::<TrampleAttribute>().is_some()
-                        });
+                    let has_lifelink = atk_card.attributes.iter().any(|attr| {
+                        attr.as_any()
+                            .downcast_ref::<GrantAbilityAttribute>()
+                            .map_or(false, |ga| ga.ability == KeywordAbility::Lifelink)
+                    });
+                    let has_trample = atk_card.attributes.iter().any(|attr| {
+                        attr.as_any()
+                            .downcast_ref::<GrantAbilityAttribute>()
+                            .map_or(false, |ga| ga.ability == KeywordAbility::Trample)
+                    });
+                    let has_deathtouch = atk_card.attributes.iter().any(|attr| {
+                        attr.as_any()
+                            .downcast_ref::<GrantAbilityAttribute>()
+                            .map_or(false, |ga| ga.ability == KeywordAbility::Deathtouch)
+                    });
 
                     if i < defenders.len() {
                         // Blocked by the i-th defender
                         let def_name = &defenders[i];
                         if let Some(def_card) = bot.battlefield_opponent_creatures.get_mut(def_name) {
-                            if let crate::app::card_library::CardType::Creature(def_cr) = &mut def_card.card_type {
+                            if let CardType::Creature(def_cr) = &mut def_card.card_type {
                                 // Attacker deals to blocker
                                 let dmg_to_blocker = if has_deathtouch { 1 } else { power };
                                 info!("{} deals {} to {}", atk_name, dmg_to_blocker, def_name);
@@ -124,15 +120,18 @@ impl CombatDamageState {
         // Apply unblocked damage to opponent
         if total_unblocked > 0 {
             info!("Applying {} unblocked damage to opponent", total_unblocked);
-            bot.updater.state.opponent_life_total = bot.updater.state.opponent_life_total.saturating_sub(total_unblocked as i32);
+            bot.updater.state.opponent_life_total =
+                bot.updater.state.opponent_life_total.saturating_sub(total_unblocked as i32);
         }
         // Apply lifegain
         if lifegain_us > 0 {
             info!("Applying lifelink: gain {} life", lifegain_us);
-            bot.updater.state.life_total = bot.updater.state.life_total.saturating_add(lifegain_us);
+            bot.updater.state.life_total =
+                bot.updater.state.life_total.saturating_add(lifegain_us);
         }
         if lifegain_opp > 0 {
-            bot.updater.state.opponent_life_total = bot.updater.state.opponent_life_total.saturating_add(lifegain_opp);
+            bot.updater.state.opponent_life_total =
+                bot.updater.state.opponent_life_total.saturating_add(lifegain_opp);
         }
 
         // Resolve stack and refresh global state
