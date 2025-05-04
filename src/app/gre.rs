@@ -2,8 +2,8 @@
 
 use std::collections::{BinaryHeap, HashSet};
 use crate::app::game_state::{GameEvent, GamePhase, Player};
-use crate::app::card_attribute::{Effect, Trigger, TargetFilter, PlayerSelector};
-use crate::app::card_library::Card;
+use crate::app::card_attribute::{Effect, Trigger, TargetFilter, PlayerSelector, Duration, Condition};
+use crate::app::card_library::{Card, ManaCost};
 use tracing::info;
 
 /// Wrapper for prioritized stack entries, supports custom ordering.
@@ -40,13 +40,22 @@ impl PartialEq for PriorityEntry {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivatedAbility {
+    pub cost: ManaCost,
+    pub condition: Condition,
+    pub effect: Effect,
+    pub activated_this_turn: bool,
+}
+
 /// An entry on the stack: spells, triggered or activated abilities.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StackEntry {
     Spell { card: Card, controller: Player },
     TriggeredAbility { source: Option<Card>, effect: Effect, controller: Player },
-    ActivatedAbility { source: Card, effect: Effect, controller: Player },
+    ActivatedAbility { source: Card, ability: ActivatedAbility, controller: Player },
 }
+
 
 /// A delayed effect scheduled for a future phase.
 #[derive(Debug, Clone)]
@@ -83,6 +92,13 @@ pub struct Gre {
     replacement_effects: Vec<ReplacementEffect>,
     /// Continuous effects.
     pub continuous_effects: Vec<Box<dyn Fn(&mut Effect)>>,
+    /// Követte, hogy az ellenfél veszített-e életet ebben a körben.
+    pub opponent_lost_life_this_turn: bool,
+    /// Követte, hogy mi veszítettünk-e életet ebben a körben.
+    pub us_lost_life_this_turn: bool,
+    /// Megakadályozott életnyerés állapotjelzők.
+    pub prevent_life_gain_opponent: bool,
+    pub prevent_life_gain_us: bool,
 }
 
 impl Default for Gre {
@@ -94,7 +110,7 @@ impl Default for Gre {
 impl Gre {
     /// Initialize the GRE, starting with the given player on priority.
     pub fn new(starting_player: Player) -> Self {
-        Self {
+        let mut gre = Self {
             stack: BinaryHeap::new(),
             delayed: Vec::new(),
             executed_delayed: HashSet::new(),
@@ -104,7 +120,12 @@ impl Gre {
             passes: 0,
             replacement_effects: Vec::new(),
             continuous_effects: Vec::new(),
-        }
+            opponent_lost_life_this_turn: false,
+            us_lost_life_this_turn: false,
+            prevent_life_gain_opponent: false,
+            prevent_life_gain_us: false,
+        };
+        gre
     }
 
     /// Cast a spell: put it on the stack with lowest priority and reset pass count.
@@ -121,6 +142,31 @@ impl Gre {
         self.delayed.push(DelayedEffect { effect, execute_phase: phase, id, depends_on });
         id
     }
+    // Dispatch TurnEnded eseménykor
+    pub fn on_turn_end(&mut self, battlefield: &mut Vec<Card>) {
+        // reseteltetjük a „life lost this turn” jelzőket
+        self.opponent_lost_life_this_turn = false;
+        self.us_lost_life_this_turn = false;
+        for card in battlefield.iter_mut() {
+            for abil in card.activated_abilities.iter_mut() {
+                abil.activated_this_turn = false;
+            }
+        }
+    }
+
+    // Able to activate check
+    pub fn can_activate(&self, ability: &ActivatedAbility) -> bool {
+        !ability.activated_this_turn && match ability.condition {
+            Condition::OpponentLostLifeThisTurn => self.opponent_lost_life_this_turn,
+            Condition::FirstTimeThisTurn => !ability.activated_this_turn,
+            _ => false,
+        }
+    }
+    /// Aktivál egy képességet: beleteszi a GRE stackbe, és flag-et állít
+    pub fn activate_ability(&mut self, source: Card, ability: ActivatedAbility, controller: Player) {
+        self.push_to_stack(StackEntry::ActivatedAbility { source, ability, controller });
+    }
+
 
     /// Dispatch delayed effects whose scheduled phase matches the current phase
     /// and whose dependencies have been met, in scheduled order.
@@ -232,9 +278,46 @@ impl Gre {
     }
 
     /// Execute or queue an effect immediately (for delayed dispatch).
-    pub fn execute(&self, effect: Effect) {
-        info!("Executing effect: {:?}", effect);
-        // TODO: Concrete state mutation logic
+    pub fn execute(&mut self, effect: Effect) {
+        match effect {
+            Effect::PreventLifeGain { player, duration } => {
+                // Ha ideiglenes, kapcsoljuk be és ütemezzük a visszaállítást
+                let flag = match player {
+                    PlayerSelector::Opponent => &mut self.prevent_life_gain_opponent,
+                    PlayerSelector::Controller => &mut self.prevent_life_gain_us,
+                    _ => return,
+                };
+                if duration != Duration::Permanent {
+                    *flag = true;
+                    // Kör végén kapcsoljuk ki
+                    self.schedule_delayed(
+                        Effect::PreventLifeGain { player, duration: Duration::Permanent },
+                        GamePhase::End,
+                        vec![],
+                    );
+                } else {
+                    // Permanent jelenti a kikapcsolást
+                    *flag = false;
+                }
+            }
+            Effect::GainLife { amount, player } => {
+                // Ha prevent flag aktív, ne engedélyezzük az élet nyerését
+                let prevented = match player {
+                    PlayerSelector::Opponent => self.prevent_life_gain_opponent,
+                    PlayerSelector::Controller => self.prevent_life_gain_us,
+                    _ => false,
+                };
+                if prevented {
+                    info!("Életnyerés ({:?}, {}) megakadályozva", player, amount);
+                } else {
+                    // TODO: implement life gain handling (GameState frissítés vagy trigger-event)
+                    info!("GainLife effektus alkalmazva: {} life to {:?}", amount, player);
+                }
+            }
+            _ => {
+                // Egyéb effektusok meglévő logikája
+            }
+        }
     }
 
     /// Resolve all entries on the stack respecting priority.
@@ -247,9 +330,12 @@ impl Gre {
                     let mut battlefield = Vec::new();
                     self.trigger_event(GameEvent::SpellResolved(card.name.clone()), &mut battlefield, controller);
                 }
-                StackEntry::TriggeredAbility { effect, .. }
-                | StackEntry::ActivatedAbility { effect, .. } => {
+                StackEntry::TriggeredAbility { effect, .. } => {
                     self.handle_effect(effect);
+                }
+                StackEntry::ActivatedAbility { ability, .. } => {
+                    // pull the effect out of the ActivatedAbility
+                    self.handle_effect(ability.effect.clone());
                 }
             }
         }
@@ -273,9 +359,14 @@ impl Gre {
 
     pub fn resolve_top_of_stack(&mut self) {
         if let Some(pe) = self.stack.pop() {
-            // drop or handle single entry
-            if let StackEntry::TriggeredAbility { effect, .. } | StackEntry::ActivatedAbility { effect, .. } = pe.entry {
-                self.handle_effect(effect);
+            match pe.entry {
+                StackEntry::TriggeredAbility { effect, .. } => {
+                    self.handle_effect(effect);
+                }
+                StackEntry::ActivatedAbility { ability, .. } => {
+                    self.handle_effect(ability.effect.clone());
+                }
+                _ => {}
             }
         }
     }

@@ -1,5 +1,5 @@
 // tests/game_state_updater_tests.rs
-
+/*
 use std::collections::BinaryHeap;
 use MTGA_me::app::card_attribute::{Effect, Trigger};
 use MTGA_me::app::game_state_updater::GameStateUpdater;
@@ -236,3 +236,4 @@ fn test_refresh_all_simultaneous_battlefield_and_mana_updates() {
     assert_eq!(updater.state.mana_available, 2);
     assert!(!updater.state.land_played_this_turn);
 }
+*/

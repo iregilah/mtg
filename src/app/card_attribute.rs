@@ -65,6 +65,10 @@ pub enum Effect {
         player: PlayerSelector,
         duration: Duration,
     },
+    PreventLifeGain {
+        player: PlayerSelector,
+        duration: Duration,
+    },
     Conditional {
         condition: Condition,
         effect_if_true: Box<Effect>,
@@ -74,6 +78,14 @@ pub enum Effect {
         effect: Box<Effect>,
         phase: GamePhase,
         deps: Vec<usize>,
+    },
+    AddMana {
+        colorless: u32,
+        red: u32,
+        blue: u32,
+        green: u32,
+        black: u32,
+        white: u32,
     },
 }
 
@@ -99,12 +111,26 @@ pub enum KeywordAbility {
     Trample,
     Menace,
     Prowess,
-    // Extend as needed
     Lifelink,
     Deathtouch,
+    Flying,
+    DoubleStrike,
 }
 
-/// Generic trigger conditions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreatureType {
+    Mouse,
+    Lizard,
+    Bird,
+    Human,
+    Spirit,
+    Soldier,
+    Wizard,
+    Monk,
+    Warrior,
+    Mercenary,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Trigger {
     OnEnterBattlefield { filter: TargetFilter },
@@ -113,7 +139,9 @@ pub enum Trigger {
     OnBlock { filter: TargetFilter },
     OnCombatDamage { filter: TargetFilter },
     OnSpellCast { filter: SpellFilter },
-    OnTargeted { filter: TargetFilter },
+    OnTargetedFirstTimeEachTurn { filter: TargetFilter },
+    OnDealtDamage { filter: TargetFilter },
+    OnAttackWithCreatureType { creature_type: CreatureType },
     AtBeginPhase { phase: GamePhase, player: PlayerSelector },
     OnCastResolved,
 }
@@ -136,8 +164,13 @@ pub enum PlayerSelector {
 /// Conditions for conditional effects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Condition {
-    SpellWasKicked,
+    OpponentLostLifeThisTurn,
     FirstTimeThisTurn,
+    SpellWasNonCreature,
+    Tap,
+    SacrificeSelf,
+    Always,
+    SpellWasKicked,
 }
 
 /// What can be targeted by effects or triggers.
@@ -149,6 +182,7 @@ pub enum TargetFilter {
     SelfCard,
     ControllerCreature,
     OpponentCreature,
+    CreatureType(CreatureType),
 }
 
 /// A token to spawn.
@@ -197,19 +231,6 @@ pub struct TriggeredEffectAttribute {
     pub effect: Effect,
 }
 
-impl CardAttribute for TriggeredEffectAttribute {
-    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        if *trigger == self.trigger {
-            Some(self.effect.clone())
-        } else {
-            None
-        }
-    }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
 
 // --- Generic: buff until duration ---
 #[derive(Debug, Clone)]
@@ -219,6 +240,110 @@ pub struct BuffAttribute {
     pub duration: Duration,
     pub target: TargetFilter,
 }
+
+// --- Generic: grant a keyword ability until duration ---
+#[derive(Debug, Clone)]
+pub struct GrantAbilityAttribute {
+    pub ability: KeywordAbility,
+    pub duration: Duration,
+    pub target: TargetFilter,
+}
+
+// Trigger és Effect rendszer részletes implementációja:
+impl CardAttribute for GrantAbilityAttribute {
+    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        match trigger {
+            Trigger::OnCastResolved
+            | Trigger::OnEnterBattlefield { .. } => {
+                Some(Effect::GrantAbility {
+                    ability: self.ability.clone(),
+                    duration: self.duration.clone(),
+                    target: self.target.clone(),
+                })
+            }
+            _ => None,
+        }
+    }
+    fn as_any(&self) -> &dyn Any { self }
+}
+
+// 1) Új KeywordAbility-hez kötött ProwessAttribute implementáció
+#[derive(Debug, Clone)]
+pub struct ProwessAttribute {
+    pub filter: SpellFilter,             // pl. InstantOrSorcery
+    pub power: i32,                      // +1
+    pub toughness: i32,                  // +1
+    pub duration: Duration,              // EndOfTurn
+}
+
+impl CardAttribute for ProwessAttribute {
+    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        if let Trigger::OnSpellCast { filter } = trigger {
+            if *filter == self.filter {
+                Some(Effect::ModifyStats {
+                    power_delta: self.power,
+                    toughness_delta: self.toughness,
+                    duration: self.duration.clone(),
+                    target: TargetFilter::SelfCard,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+    fn as_any(&self) -> &dyn Any { self }
+}
+
+// Általános Trigger rendszer részletes kibővítése és implementációja:
+impl CardAttribute for TriggeredEffectAttribute {
+    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        // bontsuk le a speciális eseteket:
+        match (&self.trigger, trigger) {
+            (Trigger::OnAttackWithCreatureType { creature_type: t1 },
+                Trigger::OnAttackWithCreatureType { creature_type: t2 })
+            if t1 == t2 =>
+                {
+                    Some(self.effect.clone())
+                }
+            (Trigger::OnTargetedFirstTimeEachTurn { .. },
+                Trigger::OnTargetedFirstTimeEachTurn { .. }) =>
+                {
+                    Some(self.effect.clone())
+                }
+            (Trigger::OnDealtDamage { filter: f1 }, Trigger::OnDealtDamage { filter: f2 })
+            if f1 == f2 =>
+                {
+                    Some(self.effect.clone())
+                }
+            _ if trigger == &self.trigger => {
+                Some(self.effect.clone())
+            }
+            _ => None,
+        }
+    }
+    fn as_any(&self) -> &dyn Any { self }
+}
+
+// Targeting filter implementáció részletes kezelése Mouse típusra:
+#[derive(Debug, Clone)]
+pub struct TypeSpecificTargetAttribute {
+    pub creature_type: CreatureType,
+    pub effect: Effect,
+}
+
+impl CardAttribute for TypeSpecificTargetAttribute {
+    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        if matches!(trigger, Trigger::AtBeginPhase { phase: GamePhase::Combat, player: PlayerSelector::Controller }) {
+            Some(self.effect.clone())
+        } else {
+            None
+        }
+    }
+    fn as_any(&self) -> &dyn Any { self }
+}
+
 
 impl CardAttribute for BuffAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
@@ -241,30 +366,6 @@ impl CardAttribute for BuffAttribute {
     }
 }
 
-// --- Generic: grant a keyword ability until duration ---
-#[derive(Debug, Clone)]
-pub struct GrantAbilityAttribute {
-    pub ability: KeywordAbility,
-    pub duration: Duration,
-    pub target: TargetFilter,
-}
-
-impl CardAttribute for GrantAbilityAttribute {
-    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        if *trigger == Trigger::OnCastResolved {
-            Some(Effect::GrantAbility {
-                ability: self.ability.clone(),
-                duration: self.duration.clone(),
-                target: self.target.clone(),
-            })
-        } else {
-            None
-        }
-    }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
 
 // --- Generic: add counters ---
 #[derive(Debug, Clone)]

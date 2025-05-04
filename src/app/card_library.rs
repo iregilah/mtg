@@ -1,9 +1,11 @@
 // src/app/card_library.rs
 
+
 use crate::app::game_state::GamePhase;
 use std::collections::HashMap;
 use crate::app::card_attribute::*;
 use crate::app::card_attribute::CardAttribute;
+use crate::app::gre::ActivatedAbility;
 
 const CACOPHONY_SCAMP: &str        = "Cacophony Scamp";
 const MONASTERY_SWIFTSPEAR: &str   = "Monastery Swiftspear";
@@ -33,6 +35,8 @@ pub struct Creature {
     pub power: i32,
     pub toughness: i32,
     pub summoning_sickness: bool,
+    pub abilities: Vec<KeywordAbility>,
+    pub types: Vec<CreatureType>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +73,7 @@ pub struct Card {
     pub mana_cost: ManaCost,
     pub attributes: Vec<Box<dyn CardAttribute>>,
     pub triggers: Vec<Trigger>,
+    pub activated_abilities: Vec<ActivatedAbility>,
 }
 
 impl PartialEq for Card {
@@ -82,14 +87,26 @@ impl PartialEq for Card {
 impl Eq for Card {}
 
 impl Card {
-    pub fn new(name: &str, card_type: CardType, mana_cost: ManaCost)
-               -> Self {
-        Card { name: name.into(), card_type, mana_cost, attributes: Vec::new(), triggers: Vec::new() }
+    pub fn new(name: &str, card_type: CardType, mana_cost: ManaCost) -> Self {
+        Card {
+            name: name.into(),
+            card_type,
+            mana_cost,
+            attributes: Vec::new(),
+            triggers: Vec::new(),
+            activated_abilities: Vec::new(),
+        }
     }
+
     pub fn with(mut self, trigger: Trigger, attr: impl CardAttribute + 'static)
                 -> Self {
         self.triggers.push(trigger);
         self.attributes.push(Box::new(attr));
+        self
+    }
+
+    pub fn with_activated(mut self, ability: ActivatedAbility) -> Self {
+        self.activated_abilities.push(ability);
         self
     }
     pub fn trigger_by(&mut self, trigger: &Trigger) -> Vec<Effect> {
@@ -114,7 +131,14 @@ pub fn build_card_library() -> HashMap<String, Card> {
     lib.insert(CACOPHONY_SCAMP.into(),
                Card::new(
                    CACOPHONY_SCAMP,
-                   CardType::Creature(Creature { name: CACOPHONY_SCAMP.into(), power:1, toughness:1, summoning_sickness:true }),
+                   CardType::Creature(Creature {
+                       name: CACOPHONY_SCAMP.into(),
+                       power: 1,
+                       toughness: 1,
+                       summoning_sickness: true,
+                       abilities: Vec::new(),
+                       types: Vec::new(),
+                   }),
                    ManaCost::new(0,1,0,0,0,0)
                )
                    .with(
@@ -130,12 +154,18 @@ pub fn build_card_library() -> HashMap<String, Card> {
                    )
     );
 
-    // Monastery Swiftspear
     lib.insert(MONASTERY_SWIFTSPEAR.into(),
                Card::new(
                    MONASTERY_SWIFTSPEAR,
-                   CardType::Creature(Creature { name: MONASTERY_SWIFTSPEAR.into(), power:1, toughness:2, summoning_sickness:true }),
-                   ManaCost::new(0,1,0,0,0,0)
+                   CardType::Creature(Creature {
+                       name: MONASTERY_SWIFTSPEAR.into(),
+                       power: 1,
+                       toughness: 2,
+                       summoning_sickness: true,
+                       abilities: Vec::new(),
+                       types: Vec::new(),
+                   }),
+                   ManaCost::new(0,1,0,0,0,0),
                )
                    .with(
                        Trigger::OnEnterBattlefield { filter: TargetFilter::SelfCard },
@@ -143,15 +173,21 @@ pub fn build_card_library() -> HashMap<String, Card> {
                    )
                    .with(
                        Trigger::OnSpellCast { filter: SpellFilter::InstantOrSorcery },
-                       AddCounterAttribute { counter: CounterType::PlusOnePlusOne, amount:1, target: TargetFilter::SelfCard }
+                       ProwessAttribute { filter: SpellFilter::InstantOrSorcery, power:1, toughness:1, duration: Duration::EndOfTurn }
                    )
     );
-
     // Electrostatic Infantry
     lib.insert(ELECTROSTATIC_INFANTRY.into(),
                Card::new(
                    ELECTROSTATIC_INFANTRY,
-                   CardType::Creature(Creature { name: ELECTROSTATIC_INFANTRY.into(), power:1, toughness:2, summoning_sickness:true }),
+                   CardType::Creature(Creature {
+                       name: ELECTROSTATIC_INFANTRY.into(),
+                       power: 1,
+                       toughness: 2,
+                       summoning_sickness: true,
+                       abilities: Vec::new(),
+                       types: Vec::new(),
+                   }),
                    ManaCost::new(1,1,0,0,0,0)
                )
                    .with(
@@ -165,31 +201,205 @@ pub fn build_card_library() -> HashMap<String, Card> {
     );
 
     // Heartfire Hero
-    lib.insert(HEARTFIRE_HERO.into(),
+    lib.insert("Heartfire Hero".into(),
                Card::new(
-                   HEARTFIRE_HERO,
-                   CardType::Creature(Creature { name: HEARTFIRE_HERO.into(), power:1, toughness:1, summoning_sickness:true }),
+                   "Heartfire Hero",
+                   CardType::Creature(Creature {
+                       name: "Heartfire Hero".into(),
+                       power:1, toughness:1, summoning_sickness:true,
+                       abilities: Vec::new(),
+                       types: vec![CreatureType::Mouse, CreatureType::Warrior],
+                   }),
                    ManaCost::new(0,1,0,0,0,0)
                )
                    .with(
-                       // Valiant: first time targeted each turn
-                       Trigger::OnTargeted { filter: TargetFilter::SelfCard },
+                       Trigger::OnTargetedFirstTimeEachTurn { filter: TargetFilter::SelfCard },
                        FirstTimePerTurnAttribute {
-                           base_trigger: Trigger::OnTargeted { filter: TargetFilter::SelfCard },
+                           base_trigger: Trigger::OnTargetedFirstTimeEachTurn { filter: TargetFilter::SelfCard },
                            reset_phase: GamePhase::End,
-                           action: Effect::AddCounter { counter: CounterType::PlusOnePlusOne, amount:1, target: TargetFilter::SelfCard },
+                           action: Effect::AddCounter {
+                               counter: CounterType::PlusOnePlusOne,
+                               amount: 1,
+                               target: TargetFilter::SelfCard
+                           },
                            used: false,
                        }
                    )
+    );
+
+    // Screaming Nemesis komplexitásának részletes kezelése:
+    lib.insert("Screaming Nemesis".into(),
+               Card::new(
+                   "Screaming Nemesis",
+                   CardType::Creature(Creature {
+                       name: "Screaming Nemesis".into(),
+                       power: 3,
+                       toughness: 3,
+                       summoning_sickness: true,
+                       abilities: vec![KeywordAbility::Haste],
+                       types: Vec::new(),
+                   }),
+                   ManaCost::new(2,1,0,0,0,0)
+               )
                    .with(
-                       // Death trigger
-                       Trigger::OnDeath { filter: TargetFilter::SelfCard },
+                       Trigger::OnEnterBattlefield { filter: TargetFilter::SelfCard },
+                       GrantAbilityAttribute { ability: KeywordAbility::Haste, duration: Duration::Permanent, target: TargetFilter::SelfCard }
+                   )
+                   .with(
+                       Trigger::OnDealtDamage { filter: TargetFilter::SelfCard },
                        TriggeredEffectAttribute {
-                           trigger: Trigger::OnDeath { filter: TargetFilter::SelfCard },
-                           effect: Effect::Damage { amount: Amount::SourcePower, target: TargetFilter::Player }
+                           trigger: Trigger::OnDealtDamage { filter: TargetFilter::SelfCard },
+                           effect: Effect::Damage { amount: Amount::SourcePower, target: TargetFilter::AnyTarget }
+                       }
+                   )
+                   .with(
+                       Trigger::OnDealtDamage { filter: TargetFilter::SelfCard },
+                       TriggeredEffectAttribute {
+                           trigger: Trigger::OnDealtDamage { filter: TargetFilter::SelfCard },
+                           effect: Effect::PreventLifeGain { player: PlayerSelector::Opponent, duration: Duration::Permanent }
                        }
                    )
     );
+
+    // Card library-be:
+    lib.insert("Hired Claw".into(),
+               Card::new(
+                   "Hired Claw",
+                   CardType::Creature(Creature {
+                       name: "Hired Claw".into(),
+                       power: 1, toughness: 2, summoning_sickness: true,
+                       abilities: Vec::new(),
+                       types: vec![CreatureType::Lizard, CreatureType::Mercenary],
+                   }),
+                   ManaCost::new(0,1,0,0,0,0)
+               )
+                   // 1) OnAttackWithCreatureType trigger
+                   .with(
+                       Trigger::OnAttackWithCreatureType{ creature_type: CreatureType::Lizard },
+                       TriggeredEffectAttribute {
+                           trigger: Trigger::OnAttackWithCreatureType{ creature_type: CreatureType::Lizard },
+                           effect: Effect::Damage { amount: Amount::Fixed(1), target: TargetFilter::OpponentCreature }
+                       }
+                   )
+                   // 2) Activated ability – építs be egy mezőt Card-ban: activated_abilities: Vec<ActivatedAbility>
+                   // majd bot.rs-ben, amikor PassPriority, ott engedélyezd:
+                   .with_activated(
+                       ActivatedAbility {
+                           cost: ManaCost::new(1,1,0,0,0,0),
+                           condition: Condition::OpponentLostLifeThisTurn,
+                           effect: Effect::AddCounter { counter: CounterType::PlusOnePlusOne, amount: 1, target: TargetFilter::SelfCard },
+                           activated_this_turn: false,
+                       }
+                   )
+    );
+    lib.insert("Manifold Mouse".into(),
+               Card::new(
+                   "Manifold Mouse",
+                   CardType::Creature(Creature {
+                       name: "Manifold Mouse".into(),
+                       power: 1, toughness: 2, summoning_sickness: true,
+                       abilities: Vec::new(),
+                       types: vec![CreatureType::Mouse, CreatureType::Soldier],
+                   }),
+                   ManaCost::new(1,1,0,0,0,0)
+               )
+                   .with(
+                       Trigger::AtBeginPhase { phase: GamePhase::Combat, player: PlayerSelector::Controller },
+                       TypeSpecificTargetAttribute {
+                           creature_type: CreatureType::Mouse,
+                           effect: Effect::Conditional {
+                               condition: Condition::FirstTimeThisTurn,
+                               effect_if_true: Box::new(Effect::GrantAbility {
+                                   ability: KeywordAbility::DoubleStrike,
+                                   duration: Duration::EndOfTurn,
+                                   target: TargetFilter::CreatureType(CreatureType::Mouse),
+                               }),
+                               effect_if_false: Some(Box::new(Effect::GrantAbility {
+                                   ability: KeywordAbility::Trample,
+                                   duration: Duration::EndOfTurn,
+                                   target: TargetFilter::CreatureType(CreatureType::Mouse),
+                               })),
+                           }
+                       }
+                   )
+    );
+    // Slickshot Show-Off
+    lib.insert("Slickshot Show-Off".into(),
+               Card::new(
+                   "Slickshot Show-Off",
+                   CardType::Creature(Creature {
+                       name: "Slickshot Show-Off".into(),
+                       power: 1, toughness: 2, summoning_sickness: true,
+                       abilities: vec![KeywordAbility::Flying, KeywordAbility::Haste],
+                       types: vec![CreatureType::Bird, CreatureType::Wizard],
+                   }),
+                   ManaCost::new(1, 1, 0, 0, 0, 0),
+               )
+                   .with(
+                       Trigger::OnSpellCast { filter: SpellFilter::InstantOrSorcery },
+                       BuffAttribute {
+                           power: 2,
+                           toughness: 0,
+                           duration: Duration::EndOfTurn,
+                           target: TargetFilter::SelfCard,
+                       },
+                   )
+    );
+
+    // Sunset Strikemaster
+    lib.insert("Sunset Strikemaster".into(),
+               Card::new(
+                   "Sunset Strikemaster",
+                   CardType::Creature(Creature {
+                       name: "Sunset Strikemaster".into(),
+                       power: 3, toughness: 1, summoning_sickness: true,
+                       abilities: vec![],
+                       types: vec![CreatureType::Human, CreatureType::Monk],
+                   }),
+                   ManaCost::new(1, 1, 0, 0, 0, 0),
+               )
+                   .with_activated(
+                       ActivatedAbility {
+                           cost: ManaCost::free(),
+                           condition: Condition::Always, // placeholder; implement tap/sacrifice logic
+                           effect: Effect::AddMana { red: 1, colorless: 0, blue: 0, green: 0, black: 0, white: 0 },
+                           activated_this_turn: false,
+                       }
+                   )
+    );
+
+    // Emberheart Challenger
+    lib.insert("Emberheart Challenger".into(),
+               Card::new(
+                   "Emberheart Challenger",
+                   CardType::Creature(Creature {
+                       name: "Emberheart Challenger".into(),
+                       power: 2, toughness: 2, summoning_sickness: true,
+                       abilities: vec![KeywordAbility::Haste],
+                       types: vec![CreatureType::Mouse, CreatureType::Warrior],
+                   }),
+                   ManaCost::new(1, 1, 0, 0, 0, 0),
+               )
+                   .with(
+                       Trigger::OnSpellCast { filter: SpellFilter::InstantOrSorcery },
+                       ProwessAttribute { filter: SpellFilter::InstantOrSorcery, power:1, toughness:1, duration: Duration::EndOfTurn }
+                   )
+
+                   .with(
+                       Trigger::OnTargetedFirstTimeEachTurn { filter: TargetFilter::SelfCard },
+                       FirstTimePerTurnAttribute {
+                           base_trigger: Trigger::OnTargetedFirstTimeEachTurn { filter: TargetFilter::SelfCard },
+                           reset_phase: GamePhase::End,
+                           action: Effect::ExileThenPlayFromExile {
+                               count: 1,
+                               player: PlayerSelector::Controller,
+                               duration: Duration::EndOfTurn,
+                           },
+                           used: false,
+                       },
+                   )
+    );
+
 
     // Felonious Rage
     lib.insert(FELONIOUS_RAGE.into(),

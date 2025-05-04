@@ -151,8 +151,6 @@ impl Bot {
                 self.land_played_this_turn = true;
                 self.land_count += 1;
                 self.land_number += 1;
-                self.cards_texts.remove(idx);
-                self.card_count = self.cards_texts.len();
             }
         }
         sleep(Duration::from_secs(1));

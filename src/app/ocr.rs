@@ -369,6 +369,7 @@ pub fn get_card_text(
     // 5) Save a stable temp file & run Tesseract
     let tmp = format!("temp_card_{}.png", index);
     info!("Saving temp OCR image as '{}'", tmp);
+    sleep(Duration::from_millis(500));
     let result = run_tesseract_pipeline(&processed, &tmp);
 
     info!("OCR result for card {}: {:?}", index, result);
