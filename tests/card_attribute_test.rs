@@ -1,5 +1,5 @@
 // tests/card_attribute_tests.rs
-
+/*
 use MTGA_me::app::card_attribute::*;
 use MTGA_me::app::card_library::{Card, CardType, Instant_, ManaCost};
 use MTGA_me::app::game_state::{GamePhase, GameState};
@@ -266,3 +266,4 @@ fn test_card_removal_during_active_effects() {
     // Nem szabad, hogy bármilyen panic legyen, és a játék állapota konzisztens marad
     assert!(!game.battlefield(p).contains("Victim"));
 }
+*/

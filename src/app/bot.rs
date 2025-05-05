@@ -49,6 +49,8 @@ pub struct Bot {
     pub strategy: Box<dyn Strategy>,
     pub updater: GameStateUpdater,
     pub attacking: Vec<String>,
+    pub combat_attackers: Vec<usize>,
+    pub combat_blocks: HashMap<usize, Vec<usize>>,
 }
 
 pub enum StateOverride {
@@ -107,6 +109,8 @@ impl Bot {
             strategy: Box::new(SimpleHeuristic),
             updater: GameStateUpdater::new(),
             attacking: Vec::new(),
+            combat_attackers: Vec::new(),
+            combat_blocks: HashMap::new(),
         };
 
         bot

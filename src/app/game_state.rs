@@ -32,6 +32,7 @@ pub enum GameEvent {
     TurnEnded,
     Custom(String),
     PhaseChange(GamePhase),
+    OnCombatDamage,
 }
 
 /// Internal game phases for effect timing

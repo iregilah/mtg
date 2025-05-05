@@ -4,7 +4,7 @@ use crate::app::error::AppError;
 use crate::app::game_state::GamePhase;
 use std::{thread::sleep, time::Duration};
 use tracing::{info};
-
+use crate::app::combat_engine::CombatEngine;
 use regex::Regex;
 
 use crate::app::{

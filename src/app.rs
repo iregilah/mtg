@@ -13,6 +13,7 @@ pub mod game_state;
 
 pub mod error;
 pub mod game_state_updater;
+pub mod combat_engine;
 
 use crate::app::error::AppError;
 use crate::app::game_state::Player;

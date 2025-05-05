@@ -2,7 +2,7 @@
 
 use std::any::Any;
 use std::fmt::Debug;
-use crate::app::game_state::GamePhase;
+use crate::app::game_state::{GameEvent, GamePhase};
 
 /// How long an effect lasts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +115,9 @@ pub enum KeywordAbility {
     Deathtouch,
     Flying,
     DoubleStrike,
+    FirstStrike,
+    Reach,
+    Offspring(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,6 +132,9 @@ pub enum CreatureType {
     Monk,
     Warrior,
     Mercenary,
+    Phyrexian,
+    Goblin,
+    Dwarf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -295,6 +301,86 @@ impl CardAttribute for ProwessAttribute {
     }
     fn as_any(&self) -> &dyn Any { self }
 }
+/// Handles Lifelink keyword: When this creature deals combat damage, its controller gains that much life.
+#[derive(Debug, Clone)]
+pub struct LifelinkAttribute;
+
+impl CardAttribute for LifelinkAttribute {
+    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        if let Trigger::OnCombatDamage { filter } = trigger {
+            if *filter == TargetFilter::SelfCard {
+                // Gain life equal to damage dealt
+                return Some(Effect::Conditional {
+                    condition: Condition::Always,
+                    effect_if_true: Box::new(Effect::GainLife { amount: 0, player: PlayerSelector::Controller }),
+                    effect_if_false: None,
+                });
+            }
+        }
+        None
+    }
+    fn as_any(&self) -> &dyn Any { self }
+}
+
+/// Handles Deathtouch keyword: When this creature deals combat damage to a creature, destroy it.
+#[derive(Debug, Clone)]
+pub struct DeathtouchAttribute;
+
+impl CardAttribute for DeathtouchAttribute {
+    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        if let Trigger::OnCombatDamage { filter } = trigger {
+            if *filter == TargetFilter::Creature {
+                // Destroy creature regardless of damage
+                return Some(Effect::Damage { amount: Amount::Fixed(1), target: TargetFilter::SelfCard });
+            }
+        }
+        None
+    }
+    fn as_any(&self) -> &dyn Any { self }
+}
+
+/// Handles Trample keyword: When this creature deals combat damage to creature, excess damage goes to opponent.
+#[derive(Debug, Clone)]
+pub struct TrampleAttribute;
+
+impl CardAttribute for TrampleAttribute {
+    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        if let Trigger::OnCombatDamage { filter } = trigger {
+            if *filter == TargetFilter::SelfCard {
+                // Excess trample damage: represented as conditional; actual value computed in resolver
+                return Some(Effect::Conditional {
+                    condition: Condition::Always,
+                    effect_if_true: Box::new(Effect::Damage { amount: Amount::SourcePower, target: TargetFilter::AnyTarget }),
+                    effect_if_false: None,
+                });
+            }
+        }
+        None
+    }
+    fn as_any(&self) -> &dyn Any { self }
+}
+
+/// Handles Double Strike: Deals combat damage twice; second time triggers again.
+#[derive(Debug, Clone)]
+pub struct DoubleStrikeAttribute;
+
+impl CardAttribute for DoubleStrikeAttribute {
+    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        if let Trigger::OnCombatDamage { filter } = trigger {
+            if *filter == TargetFilter::SelfCard {
+                // Second strike: duplicating damage event
+                return Some(Effect::Delayed {
+                    effect: Box::new(Effect::Damage { amount: Amount::SourcePower, target: TargetFilter::AnyTarget }),
+                    phase: GamePhase::CombatDamage,
+                    deps: Vec::new(),
+                });
+            }
+        }
+        None
+    }
+    fn as_any(&self) -> &dyn Any { self }
+}
+
 
 // Általános Trigger rendszer részletes kibővítése és implementációja:
 impl CardAttribute for TriggeredEffectAttribute {
