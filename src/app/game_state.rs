@@ -40,6 +40,7 @@ pub enum GameEvent {
 pub enum GamePhase {
     Beginning,
     PreCombatMain,
+    BeginningCombat,
     Combat,
     CombatDamage,
     PostCombatMain,

@@ -2,6 +2,7 @@
 
 use std::any::Any;
 use std::fmt::Debug;
+use crate::app::card_library::ManaCost;
 use crate::app::game_state::{GameEvent, GamePhase};
 
 /// How long an effect lasts.
@@ -52,6 +53,11 @@ pub enum Effect {
         token: Token,
         player: PlayerSelector,
     },
+    Offspring {
+        /// A full copy of the card to clone as a token
+        template: super::card_library::Card,
+        /// Token will always be 1/1 regardless of original
+    },
     CreateEnchantmentToken {
         enchantment: Enchantment,
         target: TargetFilter,
@@ -73,6 +79,10 @@ pub enum Effect {
         condition: Condition,
         effect_if_true: Box<Effect>,
         effect_if_false: Option<Box<Effect>>,
+    },
+    ChooseSome {
+        choose: usize,
+        options: Vec<Effect>,
     },
     Delayed {
         effect: Box<Effect>,
@@ -117,7 +127,6 @@ pub enum KeywordAbility {
     DoubleStrike,
     FirstStrike,
     Reach,
-    Offspring(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,7 +157,7 @@ pub enum Trigger {
     OnTargetedFirstTimeEachTurn { filter: TargetFilter },
     OnDealtDamage { filter: TargetFilter },
     OnAttackWithCreatureType { creature_type: CreatureType },
-    AtBeginPhase { phase: GamePhase, player: PlayerSelector },
+    AtPhase { phase: GamePhase, player: PlayerSelector },
     OnCastResolved,
 }
 
@@ -226,7 +235,7 @@ impl Clone for Box<dyn CardAttribute> {
 // CardAttribute trait kiegészítése
 pub trait CardAttribute: Any + CardAttributeClone + Debug {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect>;
-    fn as_any(&self) -> &dyn Any;  // <<< ide kerül
+    fn as_any(&self) -> &dyn Any;
 }
 
 
@@ -273,6 +282,43 @@ impl CardAttribute for GrantAbilityAttribute {
     fn as_any(&self) -> &dyn Any { self }
 }
 
+#[derive(Debug, Clone)]
+pub struct ChooseOnConditionAttribute {
+    pub choose: usize,
+    pub options: Vec<Effect>,
+}
+
+impl CardAttribute for ChooseOnConditionAttribute {
+    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        Some(Effect::ChooseSome {
+            choose: self.choose,
+            options: self.options.clone(),
+        })
+    }
+    fn as_any(&self) -> &dyn Any { self }
+}
+
+#[derive(Debug, Clone)]
+pub struct OffspringAttribute {
+    /// The original card template
+    pub template: super::card_library::Card,
+    /// Player who will receive the token
+    pub player: PlayerSelector,
+}
+
+impl CardAttribute for OffspringAttribute {
+    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        if let Trigger::OnEnterBattlefield { filter: _ } = trigger {
+            Some(Effect::Offspring {
+                template: self.template.clone(),
+            })
+        } else {
+            None
+        }
+    }
+    fn as_any(&self) -> &dyn Any { self }
+}
+
 // 1) Új KeywordAbility-hez kötött ProwessAttribute implementáció
 #[derive(Debug, Clone)]
 pub struct ProwessAttribute {
@@ -301,6 +347,7 @@ impl CardAttribute for ProwessAttribute {
     }
     fn as_any(&self) -> &dyn Any { self }
 }
+
 /// Handles Lifelink keyword: When this creature deals combat damage, its controller gains that much life.
 #[derive(Debug, Clone)]
 pub struct LifelinkAttribute;
@@ -421,7 +468,7 @@ pub struct TypeSpecificTargetAttribute {
 
 impl CardAttribute for TypeSpecificTargetAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        if matches!(trigger, Trigger::AtBeginPhase { phase: GamePhase::Combat, player: PlayerSelector::Controller }) {
+        if matches!(trigger, Trigger::AtPhase { phase: GamePhase::Combat, player: PlayerSelector::Controller }) {
             Some(self.effect.clone())
         } else {
             None
@@ -611,7 +658,7 @@ impl CardAttribute for FirstTimePerTurnAttribute {
                 self.used = true;
                 Some(self.action.clone())
             }
-            Trigger::AtBeginPhase { phase, player } if *phase == self.reset_phase => {
+            Trigger::AtPhase { phase, player } if *phase == self.reset_phase => {
                 self.used = false;
                 None
             }

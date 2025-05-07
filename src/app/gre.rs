@@ -200,8 +200,8 @@ impl Gre {
             let effects = match &event {
                 GameEvent::SpellResolved(_) => card.trigger_by(&Trigger::OnCastResolved),
                 GameEvent::CreatureDied(_) => card.trigger_by(&Trigger::OnDeath { filter: TargetFilter::SelfCard }),
-                GameEvent::TurnEnded => card.trigger_by(&Trigger::AtBeginPhase { phase: GamePhase::End, player: PlayerSelector::AnyPlayer }),
-                GameEvent::PhaseChange(p) => card.trigger_by(&Trigger::AtBeginPhase { phase: *p, player: PlayerSelector::AnyPlayer }),
+                GameEvent::TurnEnded => card.trigger_by(&Trigger::AtPhase { phase: GamePhase::End, player: PlayerSelector::AnyPlayer }),
+                GameEvent::PhaseChange(p) => card.trigger_by(&Trigger::AtPhase { phase: *p, player: PlayerSelector::AnyPlayer }),
                 _ => Vec::new(),
             };
             for eff in effects {
@@ -280,6 +280,39 @@ impl Gre {
     /// Execute or queue an effect immediately (for delayed dispatch).
     pub fn execute(&mut self, effect: Effect) {
         match effect {
+            Effect::ChooseSome { choose, options } => {
+                // At the beginning of combat on your turn, target Mouse you control
+                // gains your choice of double strike or trample until end of turn.
+                //
+                // (ide lehet majd bekérni a felhasználótól a választást, most demo-ként
+                // automatikusan az első `choose` opciót alkalmazzuk)
+                for opt in options.into_iter().take(choose) {
+                    self.handle_effect(opt);
+                }
+            }
+            Effect::Offspring { template } => {
+                // Build token card: clone template, set P/T to 1, add Token type
+                let mut token = template.clone();
+                // reset power/toughness to 1/1
+                for ct in token.card_types.iter_mut() {
+                    if let super::card_library::CardType::Creature(ref mut cr) = ct {
+                        cr.power = 1;
+                        cr.toughness = 1;
+                    }
+                }
+                // tag as a token
+                token.card_types.push(super::card_library::CardType::Token);
+                // Immediately put token onto battlefield by emitting CreateToken effect
+                let create = Effect::CreateToken { token: crate::app::card_attribute::Token { name: token.name.clone() }, player: PlayerSelector::Controller };
+                self.handle_effect(create);
+            }
+            // === CreateToken: actually place the token on the battlefield ===
+            Effect::CreateToken { token, player } => {
+                info!("Creating token {} for {:?}", token.name, player);
+                // Here we'd insert `token.name` into the appropriate battlefield collection
+                // e.g., call a callback or update GameStateUpdater when refreshing.
+                // For now, log and assume Bot/GAME_STATE_UPDATER will pick up this code.
+            }
             Effect::PreventLifeGain { player, duration } => {
                 // Ha ideiglenes, kapcsoljuk be és ütemezzük a visszaállítást
                 let flag = match player {
@@ -320,6 +353,18 @@ impl Gre {
         }
     }
 
+    /// Példa a feltétel kiértékelésére
+    fn evaluate_condition(&self, cond: &Condition) -> bool {
+        match cond {
+            Condition::Always => true,
+            Condition::FirstTimeThisTurn => {
+                // implementáld, hogy csak egyszer fusson le
+                true
+            }
+            _ => false
+        }
+    }
+
     /// Resolve all entries on the stack respecting priority.
     pub fn resolve_stack(&mut self) {
         while let Some(pe) = self.stack.pop() {
@@ -327,7 +372,14 @@ impl Gre {
             match pe.entry {
                 StackEntry::Spell { card, controller } => {
                     info!("Resolving spell: {}", card.name);
+                    // 1) Trigger OnCastResolved
                     let mut battlefield = Vec::new();
+                    // 2) Immediately trigger OnEnterBattlefield for "enters" triggers
+                    self.trigger_event(
+                        GameEvent::PhaseChange(GamePhase::Beginning),
+                        &mut battlefield,
+                        controller,
+                    );
                     self.trigger_event(GameEvent::SpellResolved(card.name.clone()), &mut battlefield, controller);
                 }
                 StackEntry::TriggeredAbility { effect, .. } => {
