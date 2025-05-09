@@ -55,9 +55,8 @@ pub enum Effect {
     },
     Offspring {
         /// A full copy of the card to clone as a token
-        /// Token will always be 1/1 regardless of original
         template: super::card_library::Card,
-
+        /// Token will always be 1/1 regardless of original
     },
     CreateEnchantmentToken {
         enchantment: Enchantment,
