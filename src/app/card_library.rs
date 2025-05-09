@@ -306,14 +306,17 @@ pub fn build_card_library() -> HashMap<String, Card> {
     lib.insert("Manifold Mouse".into(),
                Card::new(
                    "Manifold Mouse",
-                   CardType::Creature(Creature {
-                       name: "Manifold Mouse".into(),
-                       power: 1,
-                       toughness: 2,
-                       summoning_sickness: true,
-                       abilities: Vec::new(),
-                       types: vec![CreatureType::Mouse, CreatureType::Soldier],
-                   }),
+                   vec![
+                       CardType::Creature(Creature {
+                           name: "Manifold Mouse".into(),
+                           power: 1,
+                           toughness: 2,
+                           summoning_sickness: true,
+                           abilities: Vec::new(),
+                           types: vec![CreatureType::Mouse, CreatureType::Soldier],
+
+                       }),
+                   ],
                    ManaCost::new(1, 1, 0, 0, 0, 0),
                )
                    .with(
@@ -332,6 +335,25 @@ pub fn build_card_library() -> HashMap<String, Card> {
                                    target: TargetFilter::CreatureType(CreatureType::Mouse),
                                },
                            ],
+                       },
+                   )
+                   .with(
+                       Trigger::OnCastResolved,
+                       OffspringAttribute {
+                           template: Card::new(
+                               "Manifold Mouse",
+                               vec![CardType::Creature(Creature {
+                                   name: "Manifold Mouse".into(),
+                                   power: 1,
+                                   toughness: 2,
+                                   summoning_sickness: true,
+                                   abilities: Vec::new(),
+                                   types: vec![CreatureType::Mouse, CreatureType::Soldier],
+                               })
+                               ],
+                               ManaCost::new(1, 1, 0, 0, 0, 0),
+                           ),
+                           player: PlayerSelector::Controller,
                        },
                    ),
     );
