@@ -6,6 +6,7 @@ version = 4
 name = "MTGA_me"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.9.0",
  "chrono",
  "enigo",
  "image 0.25.6",

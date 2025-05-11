@@ -10,6 +10,7 @@ use crate::app::cards_positions::get_card_positions;
 use crate::app::ocr::{read_creature_text};
 use crate::app::ui::{get_average_color, is_color_within_tolerance};
 use std::collections::{HashMap, BinaryHeap};
+use crate::app::bot::Bot;
 
 
 /// Generic branch counter (odd/even).
@@ -146,11 +147,11 @@ impl GameStateUpdater {
         }
     }
     /// Update battlefield creatures for both sides.
-    pub fn update_battlefield_creatures(&mut self, w: u32, h: u32) {
-        let ours = load_side_creatures(w, h, false);
-        let opps = load_side_creatures(w, h, true);
-        self.state.battlefield          = ours.values().cloned().collect();
-        self.state.opponent_battlefield = opps.values().cloned().collect();
+    pub fn update_battlefield_creatures(&mut self, bot: &mut Bot, w: u32, h: u32) {
+        bot.refresh_battlefield();
+        // Update persistent GameState
+        self.state.battlefield = bot.battlefield_creatures.values().cloned().collect();
+        self.state.opponent_battlefield = bot.battlefield_opponent_creatures.values().cloned().collect();
     }
     /// Update mana and land-play flag.
     pub fn update_mana_and_land(&mut self, available_mana: u32, land_played: bool) {

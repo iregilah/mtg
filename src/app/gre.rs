@@ -1,44 +1,9 @@
-// src/app/gre.rs
-
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use crate::app::game_state::{GameEvent, GamePhase, Player};
-use crate::app::card_attribute::{Effect, Trigger, TargetFilter, PlayerSelector, Duration, Condition};
-use crate::app::card_library::{Card, ManaCost};
+use crate::app::card_attribute::{Effect, Trigger, TargetFilter, PlayerSelector, Duration, Condition, Amount, OffspringAttribute, CreatureType};
+use crate::app::card_library::{Card, CardType, Creature, ManaCost};
+use crate::app::card_library::CardTypeFlags;
 use tracing::info;
-
-/// Wrapper for prioritized stack entries, supports custom ordering.
-#[derive(Debug, Clone, Eq)]
-pub struct PriorityEntry {
-    pub priority: u8,
-    pub sequence: usize,
-    pub entry: StackEntry,
-}
-
-impl PriorityEntry {
-    pub fn entry(&self) -> &StackEntry {
-        &self.entry
-    }
-}
-
-impl Ord for PriorityEntry {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Higher priority first; if equal, higher sequence first (LIFO among same priority)
-        self.priority.cmp(&other.priority)
-            .then_with(|| self.sequence.cmp(&other.sequence))
-    }
-}
-
-impl PartialOrd for PriorityEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for PriorityEntry {
-    fn eq(&self, other: &Self) -> bool {
-        self.priority == other.priority && self.sequence == other.sequence
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivatedAbility {
@@ -48,7 +13,6 @@ pub struct ActivatedAbility {
     pub activated_this_turn: bool,
 }
 
-/// An entry on the stack: spells, triggered or activated abilities.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StackEntry {
     Spell { card: Card, controller: Player },
@@ -56,8 +20,33 @@ pub enum StackEntry {
     ActivatedAbility { source: Card, ability: ActivatedAbility, controller: Player },
 }
 
+/// A stackbeli tételek prioritással
+#[derive(Debug, Clone, Eq)]
+pub struct PriorityEntry {
+    pub priority: u8,
+    pub sequence: usize,
+    pub entry: StackEntry,
+}
 
-/// A delayed effect scheduled for a future phase.
+impl Ord for PriorityEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Nagyobb priority felül
+        self.priority.cmp(&other.priority)
+            .then_with(|| self.sequence.cmp(&other.sequence))
+    }
+}
+impl PartialOrd for PriorityEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl PartialEq for PriorityEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority == other.priority && self.sequence == other.sequence
+    }
+}
+
+/// A késleltetett effectek
 #[derive(Debug, Clone)]
 pub struct DelayedEffect {
     pub effect: Effect,
@@ -66,39 +55,39 @@ pub struct DelayedEffect {
     pub depends_on: Vec<usize>,
 }
 
-/// A replacement effect with priority.
+#[derive(Debug, Clone)]
 struct ReplacementEffect {
     priority: u8,
     f: Box<dyn Fn(&Effect) -> Option<Vec<Effect>>>,
 }
 
-/// Game Rules Engine managing stack, replacement and continuous effects.
+/// Game Rules Engine
 pub struct Gre {
-    /// Priority queue for stack entries.
+    /// A stack
     pub stack: BinaryHeap<PriorityEntry>,
-    /// Scheduled delayed effects.
+    /// Késleltetett effektek
     pub delayed: Vec<DelayedEffect>,
-    /// IDs of delayed effects already dispatched.
     pub executed_delayed: HashSet<usize>,
-    /// ID generator for delayed effects and sequence counter.
     pub next_id: usize,
-    /// Sequence counter for stack ordering.
     pub sequence: usize,
-    /// Who currently has priority.
     pub priority: Player,
-    /// How many consecutive passes have occurred.
     pub passes: u8,
-    /// Replacement effects, sorted by priority descending.
     replacement_effects: Vec<ReplacementEffect>,
-    /// Continuous effects.
     pub continuous_effects: Vec<Box<dyn Fn(&mut Effect)>>,
-    /// Követte, hogy az ellenfél veszített-e életet ebben a körben.
+
+    /// Életvesztés jelzései
     pub opponent_lost_life_this_turn: bool,
-    /// Követte, hogy mi veszítettünk-e életet ebben a körben.
     pub us_lost_life_this_turn: bool,
-    /// Megakadályozott életnyerés állapotjelzők.
     pub prevent_life_gain_opponent: bool,
     pub prevent_life_gain_us: bool,
+
+    /// Itt tároljuk a belső "trackelt" lényeinket
+    pub battlefield_creatures: HashMap<String, Card>,
+
+    /// Amikor `handle_effect`‐et hívjuk pl. egy TriggeredAbility-ből,
+    /// ebbe a mezőbe tesszük be ideiglenesen a `source` kártyát,
+    /// hogy az Offspring / CreateToken tudjon rá hivatkozni.
+    current_source_card: Option<Card>,
 }
 
 impl Default for Gre {
@@ -108,9 +97,8 @@ impl Default for Gre {
 }
 
 impl Gre {
-    /// Initialize the GRE, starting with the given player on priority.
     pub fn new(starting_player: Player) -> Self {
-        let mut gre = Self {
+        Self {
             stack: BinaryHeap::new(),
             delayed: Vec::new(),
             executed_delayed: HashSet::new(),
@@ -124,37 +112,43 @@ impl Gre {
             us_lost_life_this_turn: false,
             prevent_life_gain_opponent: false,
             prevent_life_gain_us: false,
-        };
-        gre
+            battlefield_creatures: HashMap::new(),
+            current_source_card: None,
+        }
     }
 
-    /// Cast a spell: put it on the stack with lowest priority and reset pass count.
+    /// Spell a stackre
     pub fn cast_spell(&mut self, card: Card, controller: Player) {
         info!("{:?} casts {}", controller, card.name);
         self.push(StackEntry::Spell { card, controller }, 0);
         self.reset_priority();
     }
 
-    /// Schedule an effect for later execution in a specified phase, with optional dependencies.
+    /// Késleltetett effect feljegyzése
     pub fn schedule_delayed(&mut self, effect: Effect, phase: GamePhase, depends_on: Vec<usize>) -> usize {
         let id = self.next_id;
         self.next_id += 1;
-        self.delayed.push(DelayedEffect { effect, execute_phase: phase, id, depends_on });
+        self.delayed.push(DelayedEffect {
+            effect, execute_phase: phase, id, depends_on
+        });
         id
     }
-    // Dispatch TurnEnded eseménykor
-    pub fn on_turn_end(&mut self, battlefield: &mut Vec<Card>) {
-        // reseteltetjük a „life lost this turn” jelzőket
+
+    /// Turn end event
+    pub fn on_turn_end(&mut self) {
+        // pl. nullázás
         self.opponent_lost_life_this_turn = false;
         self.us_lost_life_this_turn = false;
-        for card in battlefield.iter_mut() {
+
+        // Lepasszolhatnánk a "battlefield_creatures" kártyáknak,
+        // hogy (activated_this_turn = false)
+        for (_name, card) in self.battlefield_creatures.iter_mut() {
             for abil in card.activated_abilities.iter_mut() {
                 abil.activated_this_turn = false;
             }
         }
     }
 
-    // Able to activate check
     pub fn can_activate(&self, ability: &ActivatedAbility) -> bool {
         !ability.activated_this_turn && match ability.condition {
             Condition::OpponentLostLifeThisTurn => self.opponent_lost_life_this_turn,
@@ -162,29 +156,30 @@ impl Gre {
             _ => false,
         }
     }
-    /// Aktivál egy képességet: beleteszi a GRE stackbe, és flag-et állít
+
     pub fn activate_ability(&mut self, source: Card, ability: ActivatedAbility, controller: Player) {
         self.push_to_stack(StackEntry::ActivatedAbility { source, ability, controller });
     }
 
-
-    /// Dispatch delayed effects whose scheduled phase matches the current phase
-    /// and whose dependencies have been met, in scheduled order.
+    /// Delayed effectek futtatása a megfelelő fázisban
     pub fn dispatch_delayed(&mut self, current_phase: GamePhase) {
         let mut still = Vec::new();
         let mut ready: Vec<_> = self.delayed.drain(..)
             .filter(|d| {
-                d.execute_phase == current_phase
-                    && d.depends_on.iter().all(|dep| self.executed_delayed.contains(dep))
+                d.execute_phase == current_phase &&
+                    d.depends_on.iter().all(|dep| self.executed_delayed.contains(dep))
             })
             .collect();
-        // Those not ready remain
+        // a maradékot visszatesszük
         for d in self.delayed.drain(..) {
             still.push(d);
         }
         self.delayed = still;
-        // Queue ready effects in creation order
+
+        // Sorba tesszük id szerint
         ready.sort_by_key(|d| d.id);
+
+        // Lekezeljük
         for d in ready {
             info!("Dispatching delayed effect {} at {:?}", d.id, current_phase);
             self.executed_delayed.insert(d.id);
@@ -192,64 +187,103 @@ impl Gre {
         }
     }
 
-    /// Trigger abilities in response to a game event, grouping multiple triggers atomically.
+    /// Események (pl. OnCastResolved) kiváltása a battlefielden lévő kártyákra
     pub fn trigger_event(&mut self, event: GameEvent, battlefield: &mut Vec<Card>, controller: Player) {
         info!("Firing event: {:?}", event);
+
         let mut batch = Vec::new();
         for card in battlefield.iter_mut() {
             let effects = match &event {
-                GameEvent::SpellResolved(_) => card.trigger_by(&Trigger::OnCastResolved),
-                GameEvent::CreatureDied(_) => card.trigger_by(&Trigger::OnDeath { filter: TargetFilter::SelfCard }),
-                GameEvent::TurnEnded => card.trigger_by(&Trigger::AtPhase { phase: GamePhase::End, player: PlayerSelector::AnyPlayer }),
-                GameEvent::PhaseChange(p) => card.trigger_by(&Trigger::AtPhase { phase: *p, player: PlayerSelector::AnyPlayer }),
+                GameEvent::SpellResolved(_spell_name) => {
+                    card.trigger_by(&Trigger::OnCastResolved)
+                }
+                GameEvent::CreatureDied(_name) => {
+                    card.trigger_by(&Trigger::OnDeath { filter: TargetFilter::SelfCard })
+                }
+                GameEvent::TurnEnded => {
+                    card.trigger_by(&Trigger::AtPhase { phase: GamePhase::End, player: PlayerSelector::AnyPlayer })
+                }
+                GameEvent::PhaseChange(p) => {
+                    card.trigger_by(&Trigger::AtPhase { phase: *p, player: PlayerSelector::AnyPlayer })
+                }
                 _ => Vec::new(),
             };
             for eff in effects {
                 batch.push((card.clone(), eff));
             }
         }
+
         self.reset_priority();
-        for (source, eff) in batch {
+
+        // Minden effectet TriggeredAbility formában tolunk a stackre,
+        // elmentve a forrást "Some(card)".
+        for (source_card, eff) in batch {
+            // delayed effect?
             match eff {
                 Effect::Delayed { effect, phase, deps } => {
                     let id = self.schedule_delayed(*effect.clone(), phase, deps.clone());
                     info!("Scheduled delayed effect id {} from trigger", id);
                 }
-                eff => {
-                    let prio = match &eff {
+                e => {
+                    let prio = match &e {
                         Effect::ModifyStats { .. } | Effect::Proliferate { .. } => 2,
                         _ => 1,
                     };
-                    self.push(StackEntry::TriggeredAbility { source: Some(source), effect: eff, controller }, prio);
+                    self.push(
+                        StackEntry::TriggeredAbility {
+                            source: Some(source_card),
+                            effect: e,
+                            controller
+                        },
+                        prio
+                    );
                 }
             }
         }
     }
 
-    /// Register a replacement effect with priority.
     pub fn add_replacement_effect<F>(&mut self, priority: u8, f: F)
-    where
-        F: 'static + Fn(&Effect) -> Option<Vec<Effect>>,
+    where F: 'static + Fn(&Effect) -> Option<Vec<Effect>>
     {
-        self.replacement_effects.push(ReplacementEffect { priority, f: Box::new(f) });
-        self.replacement_effects.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.replacement_effects.push(ReplacementEffect {
+            priority,
+            f: Box::new(f),
+        });
+        // priority alapján csökkenő sorrend
+        self.replacement_effects.sort_by(|a,b| b.priority.cmp(&a.priority));
     }
 
-    /// Register a continuous effect (e.g., damage modification).
     pub fn add_continuous_effect<F>(&mut self, effect: F)
-    where
-        F: 'static + Fn(&mut Effect),
+    where F: 'static + Fn(&mut Effect)
     {
         self.continuous_effects.push(Box::new(effect));
     }
 
-    /// Handle an effect: apply replacement chaining, continuous effects, then execute.
+    /// **Beléptetünk** egy kártyát a battlefieldre (a GRE belső track-jébe),
+    /// majd lefuttatjuk rajta az OnEnterBattlefield triggert.
+    pub fn enter_battlefield(&mut self, card: &mut Card) {
+        let card_name = card.name.clone();
+
+        // 1) betesszük a belső táblába
+        self.battlefield_creatures.insert(card_name.clone(), card.clone());
+
+        // 2) OnEnterBattlefield triggerek futtatása
+        let effects = card.trigger_by(&Trigger::OnEnterBattlefield { filter: TargetFilter::SelfCard });
+        for eff in effects {
+            self.handle_effect(eff);
+        }
+    }
+
+    /// A "fő" effectkezelő, replacement + continuous effektekkel
     pub fn handle_effect(&mut self, effect: Effect) {
+        // Replacement
         let replaced = if self.replacement_effects.is_empty() {
             vec![effect]
         } else {
             self.apply_replacement(&effect, 0)
         };
+
+        // Continuous effectek
         let mut final_effects = Vec::new();
         for mut e in replaced {
             for cont in &self.continuous_effects {
@@ -257,12 +291,14 @@ impl Gre {
             }
             final_effects.push(e);
         }
+
+        // Végrehajtás
         for e in final_effects {
             self.execute(e);
         }
     }
 
-    /// Recursively apply replacement effects in priority order.
+    /// Rekurzív replacement-chaining
     fn apply_replacement(&self, effect: &Effect, idx: usize) -> Vec<Effect> {
         if idx >= self.replacement_effects.len() {
             return vec![effect.clone()];
@@ -270,124 +306,232 @@ impl Gre {
         let replacer = &self.replacement_effects[idx];
         if let Some(repls) = (replacer.f)(effect) {
             repls.into_iter()
-                .flat_map(|eff| self.apply_replacement(&eff, idx + 1))
+                .flat_map(|eff| self.apply_replacement(&eff, idx+1))
                 .collect()
         } else {
-            self.apply_replacement(effect, idx + 1)
+            self.apply_replacement(effect, idx+1)
         }
     }
+    /// Általános kártya-klónozó: bemenet az eredeti Card, plusz opcionális power/toughness
+    /// felülírás, plusz bitflag hozzáadás.
+    pub fn clone_card(
+        &self,
+        original: &Card,
+        new_power: Option<i32>,
+        new_toughness: Option<i32>,
+        added_flags: Option<CardTypeFlags>,
+    ) -> Card {
+        let mut cloned = original.clone();
+        // Ha creature, power/toughness cseréje:
+        if let CardType::Creature(ref mut cr) = cloned.card_type {
+            if let Some(p) = new_power {
+                cr.power = p;
+            }
+            if let Some(t) = new_toughness {
+                cr.toughness = t;
+            }
+        }
+        // plusz type_flags:
+        if let Some(flags) = added_flags {
+            cloned.type_flags |= flags;
+        }
+        cloned
+    }
 
-    /// Execute or queue an effect immediately (for delayed dispatch).
+    /// Egy teljesen új “token creature” kártyát hoz létre (nem klón!),
+    /// pl. Felonious Rage 2/2 Detective, stb.
+    /// Summoning sickness = true, type = Creature + Token
+    pub fn create_creature_token(
+        &mut self,
+        name: &str,
+        power: i32,
+        toughness: i32,
+        creature_types: Vec<CreatureType>,
+    ) {
+        // 1) új Card, Creature + paraméteres power/toughness
+        let mut new_card = Card::new(
+            name,
+            CardType::Creature(Creature {
+                power,
+                toughness,
+                summoning_sickness: true,
+                abilities: Vec::new(),
+                types: creature_types,
+            }),
+            ManaCost::free(),
+        )
+            // és a bitflag: CREATURE | TOKEN
+            .with_added_type(CardTypeFlags::CREATURE)
+            .with_added_type(CardTypeFlags::TOKEN);
+
+        // 2) Hozzáadjuk a battlefieldhez (GRE belső track), OnEnterBattlefield
+        self.enter_battlefield(&mut new_card);
+    }
+
+    /// A klónozott (vagy egyéb) kártyát beteszi a battlefieldre,
+    /// lefuttatva az OnEnterBattlefield triggert is.
+    pub fn create_clone_card(&mut self, mut cloned: Card) {
+        self.enter_battlefield(&mut cloned);
+    }
+
+    /// A tényleges "egy effect" végrehajtása
     pub fn execute(&mut self, effect: Effect) {
         match effect {
-            Effect::ChooseSome { choose, options } => {
-                // At the beginning of combat on your turn, target Mouse you control
-                // gains your choice of double strike or trample until end of turn.
+            Effect::Offspring { cost } => {
+                info!("** Offspring effect resolved, cost = {} (UI-ban már befizetve).", cost);
+
+                if let Some(ref src) = self.current_source_card {
+                    // Közvetlenül NEM pakolunk OffspringAttribute-ot,
+                    // hanem “ha belép => klón” helyett azonnal klónozunk,
+                    // mert a feladat kéri, hogy a creature belépése UTÁN
+                    // jöjjön a token. Ha mégis OnEnterBattlefield-kor jöjjön,
+                    // akkor maradhat a régi logika.
+                    //
+                    // Példa: Azonnali klón (ha a forrás már a battlefield-en van):
+                    let cloned = self.clone_card(src, Some(1), Some(1), Some(CardTypeFlags::TOKEN));
+                    // Tetszőleges logika: pl. név+” Offspring”
+                    let new_name = format!("{} (Offspring)", cloned.name);
+                    let mut final_clone = cloned;
+                    final_clone.name = new_name;
+
+                    info!("Offspring: klónozzuk '{}', 1/1 + TOKEN", src.name);
+                    self.create_clone_card(final_clone);
+
+                } else {
+                    info!("(Nincs current_source_card, Offspring hatás inapplicable.)");
+                }
+            }
+
+            Effect::CreateToken { token_name, player } => {
+                info!("** CreateToken effect => token_name='{}', player={:?}", token_name, player);
+
+                // Példa: ha Felonious Rage => "Detective 2/2"
+                // NEM klónozunk, hanem “create_creature_token”:
+                // De honnan tudjuk a paramétereket (2/2, creature_types)?
+                // A card_attribute definícióban tárolhatnánk is.
                 //
-                // (ide lehet majd bekérni a felhasználótól a választást, most demo-ként
-                // automatikusan az első `choose` opciót alkalmazzuk)
-                for opt in options.into_iter().take(choose) {
-                    self.handle_effect(opt);
-                }
-            }
-            Effect::Offspring { template } => {
-                // Build token card: clone template, set P/T to 1, add Token type
-                let mut token = template.clone();
-                // reset power/toughness to 1/1
-                for ct in token.card_types.iter_mut() {
-                    if let super::card_library::CardType::Creature(ref mut cr) = ct {
-                        cr.power = 1;
-                        cr.toughness = 1;
-                    }
-                }
-                // tag as a token
-                token.card_types.push(super::card_library::CardType::Token);
-                // Immediately put token onto battlefield by emitting CreateToken effect
-                let create = Effect::CreateToken { token: crate::app::card_attribute::Token { name: token.name.clone() }, player: PlayerSelector::Controller };
-                self.handle_effect(create);
-            }
-            // === CreateToken: actually place the token on the battlefield ===
-            Effect::CreateToken { token, player } => {
-                info!("Creating token {} for {:?}", token.name, player);
-                // Here we'd insert `token.name` into the appropriate battlefield collection
-                // e.g., call a callback or update GameStateUpdater when refreshing.
-                // For now, log and assume Bot/GAME_STATE_UPDATER will pick up this code.
-            }
-            Effect::PreventLifeGain { player, duration } => {
-                // Ha ideiglenes, kapcsoljuk be és ütemezzük a visszaállítást
-                let flag = match player {
-                    PlayerSelector::Opponent => &mut self.prevent_life_gain_opponent,
-                    PlayerSelector::Controller => &mut self.prevent_life_gain_us,
-                    _ => return,
-                };
-                if duration != Duration::Permanent {
-                    *flag = true;
-                    // Kör végén kapcsoljuk ki
-                    self.schedule_delayed(
-                        Effect::PreventLifeGain { player, duration: Duration::Permanent },
-                        GamePhase::End,
-                        vec![],
+                // Minimális: ha token_name = "Detective 2/2", hívjuk:
+                if token_name == "Detective 2/2" {
+                    self.create_creature_token(
+                        "Detective 2/2",
+                        2,
+                        2,
+                        vec![], // pl. nincsenek plusz creature types,
+                        // vagy ide teheted pl. [CreatureType::Human, CreatureType::Soldier], stb.
                     );
                 } else {
-                    // Permanent jelenti a kikapcsolást
-                    *flag = false;
+                    // Egyéb token: “1/1” default? Vagy az effect param.
+                    // Itt tetszőleges “default”:
+                    self.create_creature_token(
+                        &token_name,
+                        1,
+                        1,
+                        vec![],
+                    );
                 }
             }
+            // --- "Kettős" opció effektek (pl. Offspring vagy no-op)
+            Effect::ChooseSome { choose, options } => {
+                // Itt a prototípus-kódban mindig az 1. választást hívnánk,
+                // de a valós UI-ban a user dönti el.
+                // Hogy illusztráljuk, hívjuk az 'nth' effectet:
+                if choose == 0 || options.is_empty() {
+                    info!("ChooseSome => nincs választott effect (choose=0).");
+                } else {
+                    // tegyük fel, fixen az utolsó választást hívjuk:
+                    let idx = choose.min(options.len());
+                    let chosen = options[idx-1].clone();
+                    info!("ChooseSome => a(z) {}. effectet hajtjuk végre: {:?}", idx, chosen);
+                    self.handle_effect(chosen);
+                }
+            }
+
+            // --- A többi effect pl. "PreventLifeGain"
+            Effect::PreventLifeGain { player, duration } => {
+                let flag = match player {
+                    PlayerSelector::Controller => &mut self.prevent_life_gain_us,
+                    PlayerSelector::Opponent   => &mut self.prevent_life_gain_opponent,
+                    PlayerSelector::AnyPlayer  => {
+                        info!("PreventLifeGain(AnyPlayer) -> nem kezelt");
+                        return;
+                    }
+                };
+                match duration {
+                    Duration::Permanent => {
+                        // permanent = kikapcsolás
+                        *flag = false;
+                    },
+                    _ => {
+                        // bekapcsolás, és end phase-re kikapcs
+                        *flag = true;
+                        self.schedule_delayed(
+                            Effect::PreventLifeGain {
+                                player,
+                                duration: Duration::Permanent
+                            },
+                            GamePhase::End,
+                            vec![],
+                        );
+                    }
+                }
+            }
+
+            // Például life gain
             Effect::GainLife { amount, player } => {
-                // Ha prevent flag aktív, ne engedélyezzük az élet nyerését
                 let prevented = match player {
-                    PlayerSelector::Opponent => self.prevent_life_gain_opponent,
                     PlayerSelector::Controller => self.prevent_life_gain_us,
-                    _ => false,
+                    PlayerSelector::Opponent   => self.prevent_life_gain_opponent,
+                    PlayerSelector::AnyPlayer  => false,
                 };
                 if prevented {
-                    info!("Életnyerés ({:?}, {}) megakadályozva", player, amount);
+                    info!("Life gain {} for {:?} meghiúsul (PreventLifeGain).", amount, player);
                 } else {
-                    // TODO: implement life gain handling (GameState frissítés vagy trigger-event)
-                    info!("GainLife effektus alkalmazva: {} life to {:?}", amount, player);
+                    info!("{:?} GAIN LIFE: +{} (state-ben még nem frissítjük).", player, amount);
                 }
             }
+
+            // Minden egyéb
             _ => {
-                // Egyéb effektusok meglévő logikája
+                info!("Executing effect: {:?}", effect);
             }
         }
     }
 
-    /// Példa a feltétel kiértékelésére
-    fn evaluate_condition(&self, cond: &Condition) -> bool {
-        match cond {
-            Condition::Always => true,
-            Condition::FirstTimeThisTurn => {
-                // implementáld, hogy csak egyszer fusson le
-                true
-            }
-            _ => false
-        }
-    }
-
-    /// Resolve all entries on the stack respecting priority.
+    /// A stacket teljesen feloldjuk
     pub fn resolve_stack(&mut self) {
         while let Some(pe) = self.stack.pop() {
             info!("Resolving {:?}", pe.entry);
             match pe.entry {
                 StackEntry::Spell { card, controller } => {
-                    info!("Resolving spell: {}", card.name);
-                    // 1) Trigger OnCastResolved
-                    let mut battlefield = Vec::new();
-                    // 2) Immediately trigger OnEnterBattlefield for "enters" triggers
+                    info!("Resolving spell: '{}'", card.name);
+
+                    // 1) A kijátszott lény "valójában" a battlefieldre kerülne:
+                    //    Ehhez pl. enter_battlefield(&mut card).
+                    //    Ha OnEnterBattlefield van, az lefut.
+                    let mut c = card.clone();
+                    self.enter_battlefield(&mut c);
+
+                    // 2) OnCastResolved triggerek is
                     self.trigger_event(
-                        GameEvent::PhaseChange(GamePhase::Beginning),
-                        &mut battlefield,
+                        GameEvent::SpellResolved(card.name.clone()),
+                        &mut Vec::new(), // ide pl. a stacken kívüli permanenseket is beírhatnánk
                         controller,
                     );
-                    self.trigger_event(GameEvent::SpellResolved(card.name.clone()), &mut battlefield, controller);
                 }
-                StackEntry::TriggeredAbility { effect, .. } => {
+
+                StackEntry::TriggeredAbility { source, effect, .. } => {
+                    // Forrás-lapot elmentjük a current_source_card-ba,
+                    // hogy Offspring / CreateToken is tudja, mihez klónozza a tokent
+                    self.current_source_card = source;
                     self.handle_effect(effect);
+                    // Takarítás
+                    self.current_source_card = None;
                 }
-                StackEntry::ActivatedAbility { ability, .. } => {
-                    // pull the effect out of the ActivatedAbility
+
+                StackEntry::ActivatedAbility { source, ability, .. } => {
+                    self.current_source_card = Some(source);
                     self.handle_effect(ability.effect.clone());
+                    self.current_source_card = None;
                 }
             }
         }
@@ -412,13 +556,20 @@ impl Gre {
     pub fn resolve_top_of_stack(&mut self) {
         if let Some(pe) = self.stack.pop() {
             match pe.entry {
-                StackEntry::TriggeredAbility { effect, .. } => {
+                StackEntry::TriggeredAbility { source, effect, .. } => {
+                    self.current_source_card = source;
                     self.handle_effect(effect);
+                    self.current_source_card = None;
                 }
-                StackEntry::ActivatedAbility { ability, .. } => {
+                StackEntry::ActivatedAbility { source, ability, .. } => {
+                    self.current_source_card = Some(source);
                     self.handle_effect(ability.effect.clone());
+                    self.current_source_card = None;
                 }
-                _ => {}
+                StackEntry::Spell { card, .. } => {
+                    info!("Spell popped from stack: '{}'", card.name);
+                    // akár ide is tehetünk logikát
+                }
             }
         }
     }

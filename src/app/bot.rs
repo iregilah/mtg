@@ -11,7 +11,7 @@ use crate::app::error::AppError;
 use crate::app::game_state::StackEntry;
 use crate::app::game_state::StackEntry as GameStateStackEntry;
 use crate::app::gre::StackEntry as GreStackEntry;
-use crate::app::game_state_updater::GameStateUpdater;
+use crate::app::game_state_updater::{GameStateUpdater, load_side_creatures};
 use std::{
     collections::HashMap,
     thread::sleep,
@@ -20,7 +20,7 @@ use std::{
 use tracing::{error, info, warn};
 
 use crate::app::{card_library::{build_card_library, Card, CardType}, cards_positions::get_card_positions, creature_positions::{get_own_creature_positions, get_opponent_creature_positions}, ui::{Cords, set_cursor_pos, left_click, press_key, get_average_color, is_color_within_tolerance}, ocr::{read_creature_text, get_card_text}, game_state};
-
+use crate::app::card_library::CardTypeFlags;
 use crate::app::game_state::{Strategy, SimpleHeuristic};
 
 pub struct Bot {
@@ -159,7 +159,35 @@ impl Bot {
         }
         sleep(Duration::from_secs(1));
     }
+    /// Refresh battlefield OCR and merge tracked tokens
+    pub fn refresh_battlefield(&mut self) {
+        let ours_ocr = load_side_creatures(
+            self.screen_width as u32,
+            self.screen_height as u32,
+            false,
+        );
+        let mut merged = ours_ocr;
+        // Preserve existing tracked tokens
+        for (name, card) in self.battlefield_creatures.iter() {
+            if card.type_flags.contains(CardTypeFlags::TOKEN) {
+                merged.insert(name.clone(), card.clone());
+            }
+        }
+        self.battlefield_creatures = merged;
 
+        let opp_ocr = load_side_creatures(
+            self.screen_width as u32,
+            self.screen_height as u32,
+            true,
+        );
+        let mut opp_merged = opp_ocr;
+        for (name, card) in self.battlefield_opponent_creatures.iter() {
+            if card.type_flags.contains(CardTypeFlags::TOKEN) {
+                opp_merged.insert(name.clone(), card.clone());
+            }
+        }
+        self.battlefield_opponent_creatures = opp_merged;
+    }
     pub fn on_spell_resolved(&mut self) {
         let name = self.last_cast_card_name.clone();
         let mut targets: Vec<Card> = self.battlefield_creatures.values().cloned().collect();
@@ -180,14 +208,14 @@ impl Bot {
         if let Some((i, _text)) = self.cards_texts.iter().enumerate().find(|(_, txt)| {
             self.can_cast_instant() &&
                 build_card_library().values().any(|card| {
-                    matches!(card.card_type, CardType::Instant(_)) &&
+                    matches!(card.card_type, CardType::Instant) &&
                         Bot::text_contains(&card.name, txt)
                 })
         }) {
             // get the Card struct
             let card_library = build_card_library();
             if let Some(card) = card_library.values().find(|c| {
-                matches!(c.card_type, CardType::Instant(_)) &&
+                matches!(c.card_type, CardType::Instant) &&
                     Bot::text_contains(&c.name, &self.cards_texts[i])
             }) {
                 match self.try_cast_card(i, card) {
@@ -279,8 +307,9 @@ impl Bot {
                                 self.battlefield_creatures.insert(new_card.name.clone(), new_card);
                             }
                             self.updater.update_battlefield_creatures(
+                                self,
                                 self.screen_width as u32,
-                                self.screen_height as u32,
+                                self.screen_height as u32
                             );
                         } else if let Err(e) = self.try_cast_card(i, card) {
                             warn!("Cannot cast {}: {:?}", card.name, e);
@@ -294,7 +323,7 @@ impl Bot {
     }
     pub fn cast_instants(&mut self) -> u32 {
         self.cast_cards_by_filter(|card_type| match card_type {
-            CardType::Instant(_) => true,
+            CardType::Instant => true,
             _ => false,
         })
     }
@@ -361,7 +390,7 @@ impl Bot {
 
     /// Returns true if there's an instant in hand you can afford.
     pub fn can_cast_instant(&self) -> bool {
-        self.can_cast_card(|t| matches!(t, CardType::Instant(_)))
+        self.can_cast_card(|t| matches!(t, CardType::Instant))
     }
 
     /// Returns true if there's a creature in hand you can afford.
@@ -386,8 +415,9 @@ impl Bot {
                 info!("Creature card detected in hand. Attempting to cast creature.");
                 self.cast_creatures();
                 self.updater.update_battlefield_creatures(
+                    self,
                     self.screen_width as u32,
-                    self.screen_height as u32,
+                    self.screen_height as u32
                 );
             }
         }
