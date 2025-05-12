@@ -1,0 +1,223 @@
+// src/app/gre/mod.rs
+
+use std::collections::{BinaryHeap, HashMap, HashSet};
+use tracing::{debug, info, warn};
+
+use crate::app::card_library::{Card, CardType};
+use crate::app::card_library::CardTypeFlags;
+use crate::app::card_attribute::{Effect, Condition, Duration, PlayerSelector, CreatureType, TargetFilter};
+use crate::app::game_state::{GamePhase, GameEvent, Player};
+
+
+// A többi saját mod
+pub mod stack;
+pub mod gre_structs;
+pub mod trigger;
+pub mod effect_resolution;
+
+// Publikus újra-exportálás, hogy kívülről elérhető legyen
+pub use stack::{StackEntry, PriorityEntry};
+pub use activated_ability::ActivatedAbility;
+pub use delayed_effect::DelayedEffect;
+pub use replacement_effect::ReplacementEffect;
+
+// Az effect_resolution-ból is publikus, amennyiben kívülről is kell
+pub use effect_resolution::{
+    handle_effect,
+    apply_replacement,
+    clone_card,
+    create_creature_token,
+    create_clone_card,
+    current_stack_target,
+    replace_targeted_filter_with_exact,
+    execute,
+};
+
+// A triggerek moduljából:
+pub use trigger::{
+    trigger_event,
+    trigger_event_tree,
+    // stb.
+};
+
+/// Ez lesz a "Game Rules Engine" (GRE) maga
+pub struct Gre {
+    /// A stack
+    pub stack: BinaryHeap<PriorityEntry>,
+    /// Késleltetett effektek
+    pub delayed: Vec<DelayedEffect>,
+    pub executed_delayed: HashSet<usize>,
+
+    pub next_id: usize,
+    pub next_card_id: u64,
+    pub sequence: usize,
+    pub priority: Player,
+    pub passes: u8,
+
+    pub replacement_effects: Vec<ReplacementEffect>,
+    pub continuous_effects: Vec<Box<dyn Fn(&mut Effect)>>,
+
+    /// Életvesztés jelzései
+    pub opponent_lost_life_this_turn: bool,
+    pub us_lost_life_this_turn: bool,
+    pub prevent_life_gain_opponent: bool,
+    pub prevent_life_gain_us: bool,
+
+    /// Itt tároljuk a belső "trackelt" lényeinket
+    pub battlefield_creatures: HashMap<u64, Card>,
+
+    pub death_triggers_this_turn: Vec<(Card, Effect)>,
+
+    pub current_source_card: Option<Card>,
+}
+
+impl Gre {
+    pub fn new(starting_player: Player) -> Self {
+        Self {
+            stack: BinaryHeap::new(),
+            delayed: Vec::new(),
+            executed_delayed: HashSet::new(),
+            next_id: 0,
+            next_card_id: 1,
+            sequence: 0,
+            priority: starting_player,
+            passes: 0,
+            replacement_effects: Vec::new(),
+            continuous_effects: Vec::new(),
+            opponent_lost_life_this_turn: false,
+            us_lost_life_this_turn: false,
+            prevent_life_gain_opponent: false,
+            prevent_life_gain_us: false,
+            battlefield_creatures: HashMap::new(),
+            death_triggers_this_turn: Vec::new(),
+            current_source_card: None,
+        }
+    }
+}
+
+impl Default for Gre {
+    fn default() -> Self {
+        Gre::new(Player::Us)
+    }
+}
+
+// Metódusok, amiket itt hagyunk (például):
+impl Gre {
+
+    pub fn on_turn_end(&mut self) {
+        info!("on_turn_end() -> turn is ending, reset life-lost flags & death_triggers.");
+        self.opponent_lost_life_this_turn = false;
+        self.us_lost_life_this_turn = false;
+        self.death_triggers_this_turn.clear();
+        // ...
+        for (_id, card) in self.battlefield_creatures.iter_mut() {
+            for abil in card.activated_abilities.iter_mut() {
+                abil.activated_this_turn = false;
+            }
+        }
+    }
+
+    pub fn can_activate(&self, ability: &crate::app::gre::ActivatedAbility) -> bool {
+        !ability.activated_this_turn && match ability.condition {
+            Condition::OpponentLostLifeThisTurn => self.opponent_lost_life_this_turn,
+            Condition::FirstTimeThisTurn => !ability.activated_this_turn,
+            _ => false,
+        }
+    }
+
+    pub fn reset_priority(&mut self) {
+        debug!("reset_priority() -> passes=0");
+        self.passes = 0;
+    }
+
+    pub fn push_to_stack(&mut self, entry: StackEntry) {
+        let prio = if matches!(entry, StackEntry::ActivatedAbility { .. }) { 3 } else { 1 };
+        self.push(entry, prio);
+        self.reset_priority();
+    }
+
+    fn push(&mut self, entry: StackEntry, priority: u8) {
+        let seq = self.sequence;
+        self.sequence = self.sequence.wrapping_add(1);
+        debug!("push() -> pushing to stack: {:?}, prio={}, seq={}", entry, priority, seq);
+        self.stack.push(PriorityEntry { priority, sequence: seq, entry });
+    }
+
+    pub fn cast_spell_with_target(&mut self, card: Card, controller: Player, target: Card) {
+        info!("{:?} casts '{}', target='{}'", controller, card.name, target.name);
+        let entry = StackEntry::Spell {
+            card,
+            controller,
+            target_creature: Some(target),
+        };
+        self.push(entry, 0);
+        self.reset_priority();
+    }
+
+    pub fn activate_ability(&mut self, source: Card, ability: crate::app::gre::ActivatedAbility, controller: Player) {
+        info!("activate_ability() -> source='{}', condition={:?}, effect={:?}",
+              source.name, ability.condition, ability.effect);
+        self.push_to_stack(StackEntry::ActivatedAbility { source, ability, controller });
+    }
+
+    pub fn resolve_stack(&mut self) {
+        info!("resolve_stack() -> start resolving all stack entries...");
+        while let Some(pe) = self.stack.pop() {
+            info!("  popped top: {:?}", pe.entry);
+            match pe.entry {
+                StackEntry::Spell { card, controller, target_creature } => {
+                    info!("  -> Resolving Spell '{}'", card.name);
+                    let mut c = card.clone();
+                    self.enter_battlefield(&mut c);
+
+                    self.trigger_event(
+                        GameEvent::SpellResolved(card.name.clone()),
+                        &mut Vec::new(),
+                        controller,
+                    );
+                }
+
+                StackEntry::TriggeredAbility { source, effect, controller } => {
+                    info!("  -> Resolving TriggeredAbility: effect={:?}", effect);
+                    self.current_source_card = source;
+                    self.handle_effect(effect);
+                    self.current_source_card = None;
+                }
+
+                StackEntry::ActivatedAbility { source, ability, controller } => {
+                    info!("  -> Resolving ActivatedAbility: effect={:?}", ability.effect);
+                    self.current_source_card = Some(source);
+                    self.handle_effect(ability.effect.clone());
+                    self.current_source_card = None;
+                }
+            }
+        }
+        info!("resolve_stack() -> stack is now empty.");
+    }
+
+    pub fn resolve_top_of_stack(&mut self) {
+        info!("resolve_top_of_stack() -> attempting to pop 1 item from stack...");
+        if let Some(pe) = self.stack.pop() {
+            match pe.entry {
+                StackEntry::TriggeredAbility { source, effect, controller } => {
+                    info!("  -> top is TriggeredAbility, effect={:?}", effect);
+                    self.current_source_card = source;
+                    self.handle_effect(effect);
+                    self.current_source_card = None;
+                }
+                StackEntry::ActivatedAbility { source, ability, controller } => {
+                    info!("  -> top is ActivatedAbility, effect={:?}", ability.effect);
+                    self.current_source_card = Some(source);
+                    self.handle_effect(ability.effect.clone());
+                    self.current_source_card = None;
+                }
+                StackEntry::Spell { card, controller, target_creature } => {
+                    info!("  -> top is Spell '{}', (just popping, not auto-resolving).", card.name);
+                    // ...
+                }
+            }
+        } else {
+            debug!("  -> stack is empty, nothing to pop.");
+        }
+    }
+}

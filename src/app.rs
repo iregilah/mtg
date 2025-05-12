@@ -8,9 +8,8 @@ pub mod ui;
 pub mod state;
 pub mod creature_positions;
 pub mod card_attribute;
-pub mod gre;
 pub mod game_state;
-
+pub mod gre;
 pub mod error;
 pub mod game_state_updater;
 pub mod combat_engine;
