@@ -22,7 +22,7 @@ const MOUNTAIN: &str = "Mountain";
 const ROCKFACE_VILLAGE: &str = "Rockface Village";
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Creature {
     pub power: i32,
     pub toughness: i32,
@@ -31,7 +31,7 @@ pub struct Creature {
     pub types: Vec<CreatureType>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CardType {
     Creature(Creature),
     Instant,
@@ -66,7 +66,7 @@ impl ManaCost {
     }
 }
 bitflags! {
-    #[derive(Default, Debug, Clone, PartialEq, Eq)]
+    #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
     pub struct CardTypeFlags: u32 {
         const NONE         = 0;
         const LAND         = 1 << 0;
@@ -82,7 +82,7 @@ bitflags! {
 }
 /// A kártya fő struktúrája.
 /// + `type_flags` mező is, bitflags-alapú
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Clone)]
 pub struct Card {
     pub card_id: u64,
     pub name: String,
@@ -94,18 +94,37 @@ pub struct Card {
     pub activated_abilities: Vec<ActivatedAbility>,
     pub attached_to: Option<u64>,
 }
-
-// Ezen kiegészítés, hogy lehessen betenni HashMap-be kulcsként
 impl Hash for Card {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Minimális: name, card_type, mana_cost, type_flags
+        // például:
+        self.card_id.hash(state);
         self.name.hash(state);
+
+        // card_type -> Hash
+        //   Ehhez lentebb "CardType" is implementálja a Hash-t
         self.card_type.hash(state);
-        self.mana_cost.hash(state);
+
+        // type_flags bitjei
         self.type_flags.bits().hash(state);
 
-        // Ha szeretnéd, az attributes/triggers is beleszámíthat
-        // (de meglehetősen bonyolult, mert trait object).
+        // mana_cost -> #derive(Hash)
+        self.mana_cost.hash(state);
+
+        // DÖNTÉS: triggers & attributes is hashelődjön?
+        // Ehhez a Trigger, Condition, SpellFilter, PlayerSelector, stb. mind kell #derive(Hash).
+        // Viszont a `Box<dyn CardAttribute>`
+        //  nem derívelhető automatikusan.
+        //    -> vagy kihagyod, vagy custom logikát írsz.
+        // self.triggers.hash(state);   // ha Trigger is #derive(Hash)
+        // self.activated_abilities.hash(state); // ha ActivatedAbility is #derive(Hash)
+
+        // attributes : Vec<Box<dyn CardAttribute>>
+        //   Erre tipikusan NINCS egyszerű derive-hash.
+        //   Vagy teljesen kihagyod, vagy mindegyik CardAttribute típushoz
+        //   egyedi Hash-implementációt írsz, + dyn-diszpatch.
+
+        // attached_to
+        self.attached_to.hash(state);
     }
 }
 
@@ -605,31 +624,33 @@ pub fn build_card_library() -> HashMap<String, Card> {
         )
             .with(
                 Trigger::OnCastResolved,
-                BuffAttribute {
-                    power: 2,
-                    toughness: 0,
-                    duration: Duration::EndOfTurn,
-                    target: TargetFilter::Creature,
+                TriggeredEffectAttribute {
+                    trigger: Trigger::OnCastResolved,
+                    effect: Effect::TargetedEffects {
+                        sub_effects: vec![
+                            // (1) Eredeti, mondjuk +2/+0 EoT a célpontra
+                            Effect::ModifyStats {
+                                power_delta: 2,
+                                toughness_delta: 0,
+                                duration: Duration::EndOfTurn,
+                                target: TargetFilter::Creature,
+                            },
+                            // (2) Létrehozunk egy 'Monster' enchantmentet,
+                            //     ami +1/+1‐et és Trample‐t ad
+                            //     addig, amíg fennmarad
+                            Effect::CreateEnchantmentToken {
+                                name: "Monster".into(),
+                                power_buff: 1,
+                                toughness_buff: 1,
+                                ability: KeywordAbility::Trample,
+                            },
+                        ],
+                    },
                 },
             )
-            .with(
-                Trigger::OnCastResolved,
-                CreateEnchantmentAttribute {
-                    enchantment: Enchantment { name: MONSTER_ROLE.into() },
-                    target: TargetFilter::Creature,
-                },
-            ),
     );
 
-    // Monster Role (Enchantment)
-    lib.insert(
-        MONSTER_ROLE.into(),
-        Card::new(
-            MONSTER_ROLE,
-            CardType::Enchantment,
-            ManaCost::free(),
-        ),
-    );
+
 
     // Blazing Crescendo
     lib.insert(

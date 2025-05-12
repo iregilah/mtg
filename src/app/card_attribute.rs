@@ -48,6 +48,19 @@ pub enum Effect {
         creature_types: Vec<CreatureType>,
     },
 
+    CreateEnchantmentToken {
+        name: String,
+        power_buff: i32,
+        toughness_buff: i32,
+        ability: KeywordAbility,
+    },
+
+    /// Képesség eltávolítása egy lényről
+    RemoveAbility {
+        ability: KeywordAbility,
+        target: TargetFilter,
+    },
+
     Offspring {
         cost: u32,
     },
@@ -114,7 +127,7 @@ pub enum CounterType {
 }
 
 /// Keyword-ek
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeywordAbility {
     Haste,
     Trample,
@@ -128,7 +141,7 @@ pub enum KeywordAbility {
     Reach,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CreatureType {
     Mouse,
     Lizard,
@@ -257,6 +270,41 @@ impl CardAttribute for TriggeredEffectAttribute {
                 Some(self.effect.clone())
             }
             _ => None,
+        }
+    }
+    fn as_any(&self) -> &dyn Any { self }
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateEnchantmentAttribute {
+    /// A "token enchantment" neve (pl. "Monster")
+    pub name: String,
+    /// Mennyi power/toughness buffot ad
+    pub power_buff: i32,
+    pub toughness_buff: i32,
+    /// Milyen keyword ability-t ad (pl. Trample)
+    pub ability: KeywordAbility,
+    /// Kit szeretnénk célozni (pl. `TargetFilter::Creature`)
+    pub target: TargetFilter,
+}
+
+impl CardAttribute for CreateEnchantmentAttribute {
+    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        if *trigger == Trigger::OnCastResolved {
+            // Kibocsátunk egy "TargetedEffects" hatást,
+            // amelyen belül CreateEnchantmentToken jön létre
+            Some(Effect::TargetedEffects {
+                sub_effects: vec![
+                    Effect::CreateEnchantmentToken {
+                        name: self.name.clone(),
+                        power_buff: self.power_buff,
+                        toughness_buff: self.toughness_buff,
+                        ability: self.ability.clone(),
+                    },
+                ],
+            })
+        } else {
+            None
         }
     }
     fn as_any(&self) -> &dyn Any { self }

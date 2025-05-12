@@ -3,7 +3,7 @@
 use tracing::{info, warn};
 use crate::app::game_state::GameState;
 use crate::app::gre::{PriorityEntry, StackEntry};
-use crate::app::card_library::{build_card_library, Card};
+use crate::app::card_library::{build_card_library, Card, CardTypeFlags};
 use crate::app::ocr;
 use crate::app::creature_positions::{get_own_creature_positions, get_opponent_creature_positions};
 use crate::app::cards_positions::get_card_positions;
@@ -147,11 +147,42 @@ impl GameStateUpdater {
         }
     }
     /// Update battlefield creatures for both sides.
-    pub fn update_battlefield_creatures(&mut self, bot: &mut Bot, w: u32, h: u32) {
-        bot.refresh_battlefield();
-        // Update persistent GameState
-        self.state.battlefield = bot.battlefield_creatures.values().cloned().collect();
-        self.state.opponent_battlefield = bot.battlefield_opponent_creatures.values().cloned().collect();
+    pub fn update_battlefield_creatures(
+        &mut self,
+        battlefield_creatures: &mut HashMap<String, Card>,
+        battlefield_opponent_creatures: &mut HashMap<String, Card>,
+        width: u32,
+        height: u32,
+    ) {
+        // 1) OCR mindkét oldalra
+        let ours_ocr = load_side_creatures(width, height, false);
+        let mut merged_ours = ours_ocr;
+        // 2) Tokenek megtartása
+        for (name, card) in battlefield_creatures.iter() {
+            if card.type_flags.contains(CardTypeFlags::TOKEN) {
+                merged_ours.insert(name.clone(), card.clone());
+            }
+        }
+        *battlefield_creatures = merged_ours;
+
+        let opp_ocr = load_side_creatures(width, height, true);
+        let mut merged_opp = opp_ocr;
+        for (name, card) in battlefield_opponent_creatures.iter() {
+            if card.type_flags.contains(CardTypeFlags::TOKEN) {
+                merged_opp.insert(name.clone(), card.clone());
+            }
+        }
+        *battlefield_opponent_creatures = merged_opp;
+
+        // 3) Perzisztens GameState mezők frissítése
+        self.state.battlefield = battlefield_creatures
+            .values()
+            .cloned()
+            .collect();
+        self.state.opponent_battlefield = battlefield_opponent_creatures
+            .values()
+            .cloned()
+            .collect();
     }
     /// Update mana and land-play flag.
     pub fn update_mana_and_land(&mut self, available_mana: u32, land_played: bool) {
@@ -162,19 +193,31 @@ impl GameStateUpdater {
 
     /// Refresh all GameState fields.
     pub fn refresh_all(
-        &mut self,
-        screen_width:  u32,
-        screen_height: u32,
-        cards_texts:   &[String],
-        library:       &HashMap<String, Card>,
-        available_mana:u32,
-        land_played:   bool,
-        gre_stack:     &BinaryHeap<PriorityEntry>,
-    ) {
-        self.update_life_totals(screen_width, screen_height);
-        self.update_hand(cards_texts, library);
-        self.update_battlefield_creatures(screen_width, screen_height);
-        self.update_mana_and_land(available_mana, land_played);
-        self.update_stack(gre_stack);
-    }
+               &mut self,
+                screen_width:  u32,
+                screen_height: u32,
+                cards_texts:   &[String],
+                library:       &HashMap<String, Card>,
+                available_mana:u32,
+                land_played:   bool,
+                gre_stack:     &BinaryHeap<PriorityEntry>,
+                battlefield_creatures:        &mut HashMap<String, Card>,
+                battlefield_opponent_creatures:&mut HashMap<String, Card>,
+            ) {
+                // 1) OCR-s életpontok
+               self.update_life_totals(screen_width, screen_height);
+                // 2) OCR-s kéz
+                self.update_hand(cards_texts, library);
+               // 3) OCR-s táblarajz + GameState mezők
+               self.update_battlefield_creatures(
+                    battlefield_creatures,
+                    battlefield_opponent_creatures,
+                    screen_width,
+                    screen_height,
+                );
+                // 4) mana + land
+                self.update_mana_and_land(available_mana, land_played);
+                // 5) GRE stack
+                self.update_stack(gre_stack);
+            }
 }

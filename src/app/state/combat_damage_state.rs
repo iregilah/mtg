@@ -101,6 +101,8 @@ impl CombatDamageState {
             bot.land_number,
             bot.land_played_this_turn,
             &bot.gre.stack,
+            &mut bot.battlefield_creatures,
+            &mut bot.battlefield_opponent_creatures,
         );
         bot.attacking.clear();
         bot.combat_attackers.clear();

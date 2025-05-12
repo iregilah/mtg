@@ -307,9 +307,10 @@ impl Bot {
                                 self.battlefield_creatures.insert(new_card.name.clone(), new_card);
                             }
                             self.updater.update_battlefield_creatures(
-                                self,
+                                &mut self.battlefield_creatures,
+                                &mut self.battlefield_opponent_creatures,
                                 self.screen_width as u32,
-                                self.screen_height as u32
+                                self.screen_height as u32,
                             );
                         } else if let Err(e) = self.try_cast_card(i, card) {
                             warn!("Cannot cast {}: {:?}", card.name, e);
@@ -415,9 +416,10 @@ impl Bot {
                 info!("Creature card detected in hand. Attempting to cast creature.");
                 self.cast_creatures();
                 self.updater.update_battlefield_creatures(
-                    self,
+                    &mut self.battlefield_creatures,
+                    &mut self.battlefield_opponent_creatures,
                     self.screen_width as u32,
-                    self.screen_height as u32
+                    self.screen_height as u32,
                 );
             }
         }
@@ -458,12 +460,12 @@ impl Bot {
             }
         }
     }
-    pub fn remove_card_from_hand(bot: &mut Bot, card_index: usize) {
-        if card_index < bot.cards_texts.len() {
-            let removed = bot.cards_texts.remove(card_index);
+    pub fn remove_card_from_hand(&mut self, card_index: usize) {
+        if card_index < self.cards_texts.len() {
+            let removed = self.cards_texts.remove(card_index);
             info!("Removed card '{}' from hand at index {}.", removed, card_index);
-            info!("Updated hand: {:?}", bot.cards_texts);
-            bot.card_count = bot.cards_texts.len();
+            info!("Updated hand: {:?}", self.cards_texts);
+            self.card_count = self.cards_texts.len();
         } else {
             warn!("Attempted to remove card at invalid index {}.", card_index);
         }
