@@ -440,7 +440,24 @@ impl Bot {
         sleep(Duration::from_millis(150));
         Bot::remove_card_from_hand(bot, card_index);
     }
-
+    pub fn cast_felonious_rage_on_creature(&mut self, rage_card_index: usize, creature_name: &str) {
+        // 1) Kikeressük a kezünkből a Felonious Rage card-ot
+        let card_library = build_card_library();
+        let rage_text = &self.cards_texts[rage_card_index];
+        if let Some(rage_card) = card_library.values().find(|c| c.name == *rage_text) {
+            // 2) Megkeressük a battlefield-en a kiválasztott lénye(ke)t
+            if let Some(tcard) = self.battlefield_creatures.get(creature_name) {
+                // 3) Kijátszunk a GRE-be egy Spell { card: Felonious Rage, target_creature: Some(tcard.clone()) }
+                self.gre.cast_spell_with_target(
+                    rage_card.clone(),
+                    Player::Us,
+                    tcard.clone(),  // Ezt klónozzuk, mert a stack-en is tároljuk
+                );
+                // 4) Töröljük a kijátszott lapot a kezünkből
+                self.remove_card_from_hand(rage_card_index);
+            }
+        }
+    }
     pub fn remove_card_from_hand(bot: &mut Bot, card_index: usize) {
         if card_index < bot.cards_texts.len() {
             let removed = bot.cards_texts.remove(card_index);

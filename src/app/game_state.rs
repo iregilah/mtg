@@ -28,7 +28,7 @@ pub struct GameState {
 #[derive(Debug, Clone)]
 pub enum GameEvent {
     SpellResolved(String),
-    CreatureDied(String),
+    CreatureDied(Card),
     TurnEnded,
     Custom(String),
     PhaseChange(GamePhase),

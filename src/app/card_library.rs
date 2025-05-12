@@ -5,6 +5,7 @@ use crate::app::gre::ActivatedAbility;
 use crate::app::game_state::GamePhase;
 use std::hash::{Hash, Hasher};
 use bitflags::bitflags;
+use crate::app::card_attribute::CreatureType::Detective;
 
 const CACOPHONY_SCAMP: &str = "Cacophony Scamp";
 const MONASTERY_SWIFTSPEAR: &str = "Monastery Swiftspear";
@@ -83,6 +84,7 @@ bitflags! {
 /// + `type_flags` mező is, bitflags-alapú
 #[derive(Debug, Clone, Hash)]
 pub struct Card {
+    pub card_id: u64,
     pub name: String,
     pub card_type: CardType,
     pub type_flags: CardTypeFlags,
@@ -90,6 +92,7 @@ pub struct Card {
     pub attributes: Vec<Box<dyn CardAttribute>>,
     pub triggers: Vec<Trigger>,
     pub activated_abilities: Vec<ActivatedAbility>,
+    pub attached_to: Option<u64>,
 }
 
 // Ezen kiegészítés, hogy lehessen betenni HashMap-be kulcsként
@@ -133,6 +136,7 @@ impl Card {
             CardType::Token => { flags |= CardTypeFlags::TOKEN; }
         }
         Card {
+            card_id: 0, // GRE osztja ki
             name: name.into(),
             card_type,
             type_flags: flags,
@@ -140,6 +144,7 @@ impl Card {
             attributes: Vec::new(),
             triggers: Vec::new(),
             activated_abilities: Vec::new(),
+            attached_to: None,
         }
     }
     /// Egy triggert és attribútumot ad a kártyához.
@@ -558,32 +563,36 @@ pub fn build_card_library() -> HashMap<String, Card> {
         )
             .with(
                 Trigger::OnCastResolved,
-                BuffAttribute {
-                    power: 2,
-                    toughness: 0,
-                    duration: Duration::EndOfTurn,
-                    target: TargetFilter::ControllerCreature,
-                },
-            )
-            .with(
-                Trigger::OnCastResolved,
-                GrantAbilityAttribute {
-                    ability: KeywordAbility::Haste,
-                    duration: Duration::EndOfTurn,
-                    target: TargetFilter::ControllerCreature,
-                },
-            )
-            .with(
-                Trigger::OnDeath { filter: TargetFilter::SelfCard },
-                // “When that creature dies this turn, create a 2/2 white and blue Detective creature token.”
                 TriggeredEffectAttribute {
-                    trigger: Trigger::OnDeath { filter: TargetFilter::SelfCard },
-                    effect: Effect::CreateToken {
-                        token_name: "Detective 2/2 (White/Blue)".into(),
-                        player: PlayerSelector::Controller,
+                    trigger: Trigger::OnCastResolved,
+                    effect: Effect::TargetedEffects {
+                        sub_effects: vec![
+                            // 1) +2/+0 EoT
+                            Effect::ModifyStats {
+                                power_delta: 2,
+                                toughness_delta: 0,
+                                duration: Duration::EndOfTurn,
+                                target: TargetFilter::Creature,
+                            },
+                            // 2) Grant Haste EoT
+                            Effect::GrantAbility {
+                                ability: KeywordAbility::Haste,
+                                duration: Duration::EndOfTurn,
+                                target: TargetFilter::Creature,
+                            },
+                            // 3) Ha meghal a célpont a körben, hozz létre 2/2 nyomozót
+                            Effect::WhenTargetDiesThisTurn {
+                                effect: Box::new(Effect::CreateCreatureToken {
+                                    name: "Detective".into(),
+                                    power: 2,
+                                    toughness: 2,
+                                    creature_types: vec![Detective],
+                                }),
+                            },
+                        ],
                     },
                 },
-            ),
+            )
     );
 
     // Monstrous Rage

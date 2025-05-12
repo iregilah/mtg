@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::fmt::Debug;
 
-use crate::app::card_library::{ManaCost};
+use crate::app::card_library::{Card, ManaCost};
 use crate::app::game_state::{GameEvent, GamePhase};
 
 
@@ -41,19 +41,26 @@ pub enum Effect {
         player: PlayerSelector,
     },
 
-    CreateToken {
-        token_name: String,
-        player: PlayerSelector,
+    CreateCreatureToken {
+        name: String,
+        power: i32,
+        toughness: i32,
+        creature_types: Vec<CreatureType>,
     },
 
     Offspring {
         cost: u32,
     },
 
-    CreateEnchantmentToken {
-        // enchantment: Enchantment,
-        target: TargetFilter,
+    TargetedEffects {
+        sub_effects: Vec<Effect>,
     },
+
+    /// “Ha a targetált lény meghal a körben, fuss le effect.”
+    WhenTargetDiesThisTurn {
+        effect: Box<Effect>,
+    },
+
     ExileTop {
         count: u32,
         player: PlayerSelector,
@@ -136,6 +143,7 @@ pub enum CreatureType {
     Phyrexian,
     Goblin,
     Dwarf,
+    Detective,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,6 +194,7 @@ pub enum TargetFilter {
     ControllerCreature,
     OpponentCreature,
     CreatureType(CreatureType),
+    ExactCardID(u64),
 }
 
 
@@ -334,17 +343,8 @@ pub struct OffspringAttribute {
 impl CardAttribute for OffspringAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
         match trigger {
-            // Ha a creature "SelfCard" belép a battlefieldre,
-            // akkor hozunk létre egy token copy-t
             Trigger::OnEnterBattlefield { filter: TargetFilter::SelfCard } => {
-                Some(Effect::CreateToken {
-                    token: Token {
-                        // A CreateToken token.neve itt placeholder lesz,
-                        // a GRE vagy a "bot" fogja klónozni az eredeti nevet/stb.
-                        name: "OffspringPlaceholder".into(),
-                    },
-                    player: PlayerSelector::Controller,
-                })
+                Some(Effect::Offspring { cost: self.additional_cost })
             }
             _ => None,
         }
@@ -520,48 +520,6 @@ impl CardAttribute for ProliferateAttribute {
     }
 }
 
-/// CreateTokenAttribute
-#[derive(Debug, Clone)]
-pub struct CreateTokenAttribute {
-    pub token: Token,
-    pub player: PlayerSelector,
-}
-
-impl CardAttribute for CreateTokenAttribute {
-    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        if matches!(trigger, Trigger::OnDeath { .. })
-            || *trigger == Trigger::OnCastResolved
-        {
-            Some(Effect::CreateToken {
-                token: self.token.clone(),
-                player: self.player.clone(),
-            })
-        } else {
-            None
-        }
-    }
-    fn as_any(&self) -> &dyn Any { self }
-}
-
-/// CreateEnchantmentAttribute
-#[derive(Debug, Clone)]
-pub struct CreateEnchantmentAttribute {
-    pub enchantment: Enchantment,
-    pub target: TargetFilter,
-}
-
-impl CardAttribute for CreateEnchantmentAttribute {
-    fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        if *trigger == Trigger::OnCastResolved {
-            Some(Effect::CreateEnchantmentToken { enchantment: self.enchantment.clone(), target: self.target.clone() })
-        } else {
-            None
-        }
-    }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
 
 /// ExileAndPlayAttribute
 #[derive(Debug, Clone)]
