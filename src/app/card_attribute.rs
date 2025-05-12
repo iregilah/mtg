@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::fmt::Debug;
+use tracing::{debug, info};
 
 use crate::app::card_library::{Card, ManaCost};
 use crate::app::game_state::{GameEvent, GamePhase};
@@ -252,47 +253,31 @@ pub struct TriggeredEffectAttribute {
 
 impl CardAttribute for TriggeredEffectAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        match (&self.trigger, trigger) {
-            (Trigger::OnAttackWithCreatureType { creature_type: t1 },
-                Trigger::OnAttackWithCreatureType { creature_type: t2 })
-            if t1 == t2 => {
-                Some(self.effect.clone())
-            }
-            (Trigger::OnTargetedFirstTimeEachTurn { .. },
-                Trigger::OnTargetedFirstTimeEachTurn { .. }) => {
-                Some(self.effect.clone())
-            }
-            (Trigger::OnDealtDamage { filter: f1 }, Trigger::OnDealtDamage { filter: f2 })
-            if f1 == f2 => {
-                Some(self.effect.clone())
-            }
-            _ if trigger == &self.trigger => {
-                Some(self.effect.clone())
-            }
-            _ => None,
-        }
+        info!("TriggeredEffectAttribute: Checking trigger {:?} against {:?}", trigger, self.trigger);
+        let result = if &self.trigger == trigger {
+            Some(self.effect.clone())
+        } else {
+            None
+        };
+        debug!("TriggeredEffectAttribute: on_trigger result = {:?}", result);
+        result
     }
     fn as_any(&self) -> &dyn Any { self }
 }
 
 #[derive(Debug, Clone)]
 pub struct CreateEnchantmentAttribute {
-    /// A "token enchantment" neve (pl. "Monster")
     pub name: String,
-    /// Mennyi power/toughness buffot ad
     pub power_buff: i32,
     pub toughness_buff: i32,
-    /// Milyen keyword ability-t ad (pl. Trample)
     pub ability: KeywordAbility,
-    /// Kit szeretnénk célozni (pl. `TargetFilter::Creature`)
     pub target: TargetFilter,
 }
 
 impl CardAttribute for CreateEnchantmentAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        if *trigger == Trigger::OnCastResolved {
-            // Kibocsátunk egy "TargetedEffects" hatást,
-            // amelyen belül CreateEnchantmentToken jön létre
+        info!("CreateEnchantmentAttribute: received trigger {:?}", trigger);
+        let res = if *trigger == Trigger::OnCastResolved {
             Some(Effect::TargetedEffects {
                 sub_effects: vec![
                     Effect::CreateEnchantmentToken {
@@ -305,12 +290,13 @@ impl CardAttribute for CreateEnchantmentAttribute {
             })
         } else {
             None
-        }
+        };
+        debug!("CreateEnchantmentAttribute: result = {:?}", res);
+        res
     }
     fn as_any(&self) -> &dyn Any { self }
 }
 
-/// Buff
 #[derive(Debug, Clone)]
 pub struct BuffAttribute {
     pub power: i32,
@@ -321,9 +307,8 @@ pub struct BuffAttribute {
 
 impl CardAttribute for BuffAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        if *trigger == Trigger::OnCastResolved
-            || matches!(trigger, Trigger::OnEnterBattlefield { .. })
-        {
+        info!("BuffAttribute: Checking trigger {:?}", trigger);
+        let res = if *trigger == Trigger::OnCastResolved || matches!(trigger, Trigger::OnEnterBattlefield { .. }) {
             Some(Effect::ModifyStats {
                 power_delta: self.power,
                 toughness_delta: self.toughness,
@@ -332,14 +317,13 @@ impl CardAttribute for BuffAttribute {
             })
         } else {
             None
-        }
+        };
+        debug!("BuffAttribute: result = {:?}", res);
+        res
     }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 
-/// GrantAbility
 #[derive(Debug, Clone)]
 pub struct GrantAbilityAttribute {
     pub ability: KeywordAbility,
@@ -349,22 +333,22 @@ pub struct GrantAbilityAttribute {
 
 impl CardAttribute for GrantAbilityAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        match trigger {
-            Trigger::OnCastResolved
-            | Trigger::OnEnterBattlefield { .. } => {
-                Some(Effect::GrantAbility {
-                    ability: self.ability.clone(),
-                    duration: self.duration.clone(),
-                    target: self.target.clone(),
-                })
-            }
-            _ => None,
-        }
+        info!("GrantAbilityAttribute: Checking trigger {:?}", trigger);
+        let res = if matches!(trigger, Trigger::OnCastResolved) || matches!(trigger, Trigger::OnEnterBattlefield { .. }) {
+            Some(Effect::GrantAbility {
+                ability: self.ability.clone(),
+                duration: self.duration.clone(),
+                target: self.target.clone(),
+            })
+        } else {
+            None
+        };
+        debug!("GrantAbilityAttribute: result = {:?}", res);
+        res
     }
     fn as_any(&self) -> &dyn Any { self }
 }
 
-/// ChooseOnConditionAttribute
 #[derive(Debug, Clone)]
 pub struct ChooseOnConditionAttribute {
     pub choose: usize,
@@ -373,34 +357,36 @@ pub struct ChooseOnConditionAttribute {
 
 impl CardAttribute for ChooseOnConditionAttribute {
     fn on_trigger(&mut self, _trigger: &Trigger) -> Option<Effect> {
-        // Mindig kiprovokálja a "ChooseSome" effectet
-        Some(Effect::ChooseSome {
+        info!("ChooseOnConditionAttribute: triggering always returns ChooseSome");
+        let res = Some(Effect::ChooseSome {
             choose: self.choose,
             options: self.options.clone(),
-        })
+        });
+        debug!("ChooseOnConditionAttribute: result = {:?}", res);
+        res
     }
     fn as_any(&self) -> &dyn Any { self }
 }
 
-/// **OffspringAttribute** – ez hozza létre belépéskor a token copy‐t
 #[derive(Debug, Clone)]
 pub struct OffspringAttribute {
-    pub additional_cost: u32, // pl. 2, 3 stb. – colorless
+    pub additional_cost: u32,
 }
 
 impl CardAttribute for OffspringAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        match trigger {
-            Trigger::OnEnterBattlefield { filter: TargetFilter::SelfCard } => {
-                Some(Effect::Offspring { cost: self.additional_cost })
-            }
-            _ => None,
-        }
+        info!("OffspringAttribute: Checking trigger {:?}", trigger);
+        let res = if let Trigger::OnEnterBattlefield { filter: TargetFilter::SelfCard } = trigger {
+            Some(Effect::Offspring { cost: self.additional_cost })
+        } else {
+            None
+        };
+        debug!("OffspringAttribute: result = {:?}", res);
+        res
     }
     fn as_any(&self) -> &dyn Any { self }
 }
 
-/// Prowess
 #[derive(Debug, Clone)]
 pub struct ProwessAttribute {
     pub filter: SpellFilter,
@@ -411,32 +397,33 @@ pub struct ProwessAttribute {
 
 impl CardAttribute for ProwessAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        debug!("ProwessAttribute: trigger = {:?}", trigger);
         if let Trigger::OnSpellCast { filter } = trigger {
             if *filter == self.filter {
-                Some(Effect::ModifyStats {
+                let res = Some(Effect::ModifyStats {
                     power_delta: self.power,
                     toughness_delta: self.toughness,
                     duration: self.duration.clone(),
                     target: TargetFilter::SelfCard,
-                })
-            } else {
-                None
+                });
+                info!("ProwessAttribute: matched filter {:?}, result = {:?}", filter, res);
+                return res;
             }
-        } else {
-            None
         }
+        None
     }
     fn as_any(&self) -> &dyn Any { self }
 }
 
-/// Lifelink
 #[derive(Debug, Clone)]
 pub struct LifelinkAttribute;
 
 impl CardAttribute for LifelinkAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        debug!("LifelinkAttribute: trigger = {:?}", trigger);
         if let Trigger::OnCombatDamage { filter } = trigger {
             if *filter == TargetFilter::SelfCard {
+                info!("LifelinkAttribute: granting lifelink conditional");
                 return Some(Effect::Conditional {
                     condition: Condition::Always,
                     effect_if_true: Box::new(Effect::GainLife { amount: 0, player: PlayerSelector::Controller }),
@@ -449,14 +436,15 @@ impl CardAttribute for LifelinkAttribute {
     fn as_any(&self) -> &dyn Any { self }
 }
 
-/// Deathtouch
 #[derive(Debug, Clone)]
 pub struct DeathtouchAttribute;
 
 impl CardAttribute for DeathtouchAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        debug!("DeathtouchAttribute: trigger = {:?}", trigger);
         if let Trigger::OnCombatDamage { filter } = trigger {
             if *filter == TargetFilter::Creature {
+                info!("DeathtouchAttribute: returning fixed damage = 1");
                 return Some(Effect::Damage { amount: Amount::Fixed(1), target: TargetFilter::SelfCard });
             }
         }
@@ -465,14 +453,15 @@ impl CardAttribute for DeathtouchAttribute {
     fn as_any(&self) -> &dyn Any { self }
 }
 
-/// Trample
 #[derive(Debug, Clone)]
 pub struct TrampleAttribute;
 
 impl CardAttribute for TrampleAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        debug!("TrampleAttribute: trigger = {:?}", trigger);
         if let Trigger::OnCombatDamage { filter } = trigger {
             if *filter == TargetFilter::SelfCard {
+                info!("TrampleAttribute: returning trample conditional");
                 return Some(Effect::Conditional {
                     condition: Condition::Always,
                     effect_if_true: Box::new(Effect::Damage { amount: Amount::SourcePower, target: TargetFilter::AnyTarget }),
@@ -485,14 +474,15 @@ impl CardAttribute for TrampleAttribute {
     fn as_any(&self) -> &dyn Any { self }
 }
 
-/// DoubleStrike
 #[derive(Debug, Clone)]
 pub struct DoubleStrikeAttribute;
 
 impl CardAttribute for DoubleStrikeAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        debug!("DoubleStrikeAttribute: trigger = {:?}", trigger);
         if let Trigger::OnCombatDamage { filter } = trigger {
             if *filter == TargetFilter::SelfCard {
+                info!("DoubleStrikeAttribute: scheduling delayed damage");
                 return Some(Effect::Delayed {
                     effect: Box::new(Effect::Damage { amount: Amount::SourcePower, target: TargetFilter::AnyTarget }),
                     phase: GamePhase::CombatDamage,
@@ -505,7 +495,6 @@ impl CardAttribute for DoubleStrikeAttribute {
     fn as_any(&self) -> &dyn Any { self }
 }
 
-/// TypeSpecificTargetAttribute
 #[derive(Debug, Clone)]
 pub struct TypeSpecificTargetAttribute {
     pub creature_type: CreatureType,
@@ -514,16 +503,16 @@ pub struct TypeSpecificTargetAttribute {
 
 impl CardAttribute for TypeSpecificTargetAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        info!("TypeSpecificTargetAttribute: checking trigger {:?}", trigger);
         if matches!(trigger, Trigger::AtPhase { phase: GamePhase::Combat, player: PlayerSelector::Controller }) {
-            Some(self.effect.clone())
-        } else {
-            None
+            info!("TypeSpecificTargetAttribute: matched combat phase, returning effect");
+            return Some(self.effect.clone());
         }
+        None
     }
     fn as_any(&self) -> &dyn Any { self }
 }
 
-/// AddCounterAttribute
 #[derive(Debug, Clone)]
 pub struct AddCounterAttribute {
     pub counter: CounterType,
@@ -533,22 +522,21 @@ pub struct AddCounterAttribute {
 
 impl CardAttribute for AddCounterAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        info!("AddCounterAttribute: received trigger {:?}", trigger);
         if matches!(trigger, Trigger::OnSpellCast { .. }) {
-            Some(Effect::AddCounter {
+            let res = Some(Effect::AddCounter {
                 counter: self.counter.clone(),
                 amount: self.amount,
                 target: self.target.clone(),
-            })
-        } else {
-            None
+            });
+            debug!("AddCounterAttribute: result = {:?}", res);
+            return res;
         }
+        None
     }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 
-/// ProliferateAttribute
 #[derive(Debug, Clone)]
 pub struct ProliferateAttribute {
     pub counter: CounterType,
@@ -557,19 +545,17 @@ pub struct ProliferateAttribute {
 
 impl CardAttribute for ProliferateAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        info!("ProliferateAttribute: trigger = {:?}", trigger);
         if matches!(trigger, Trigger::OnCombatDamage { .. }) {
-            Some(Effect::Proliferate { counter_type: self.counter.clone(), player: self.player.clone() })
-        } else {
-            None
+            let res = Some(Effect::Proliferate { counter_type: self.counter.clone(), player: self.player.clone() });
+            debug!("ProliferateAttribute: result = {:?}", res);
+            return res;
         }
+        None
     }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 
-
-/// ExileAndPlayAttribute
 #[derive(Debug, Clone)]
 pub struct ExileAndPlayAttribute {
     pub count: u32,
@@ -579,22 +565,21 @@ pub struct ExileAndPlayAttribute {
 
 impl CardAttribute for ExileAndPlayAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        info!("ExileAndPlayAttribute: trigger = {:?}", trigger);
         if *trigger == Trigger::OnCastResolved {
-            Some(Effect::ExileThenPlayFromExile {
+            let res = Some(Effect::ExileThenPlayFromExile {
                 count: self.count,
                 player: self.player.clone(),
                 duration: self.duration.clone(),
-            })
-        } else {
-            None
+            });
+            debug!("ExileAndPlayAttribute: result = {:?}", res);
+            return res;
         }
+        None
     }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 
-/// ConditionalAttribute
 #[derive(Debug, Clone)]
 pub struct ConditionalAttribute {
     pub trigger: Trigger,
@@ -605,22 +590,21 @@ pub struct ConditionalAttribute {
 
 impl CardAttribute for ConditionalAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        info!("ConditionalAttribute: checking trigger {:?} against {:?}", trigger, self.trigger);
         if *trigger == self.trigger {
-            Some(Effect::Conditional {
+            let res = Some(Effect::Conditional {
                 condition: self.condition.clone(),
                 effect_if_true: Box::new(self.effect_if_true.clone()),
                 effect_if_false: self.effect_if_false.clone().map(Box::new),
-            })
-        } else {
-            None
+            });
+            debug!("ConditionalAttribute: result = {:?}", res);
+            return res;
         }
+        None
     }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 
-/// FirstTimePerTurnAttribute
 #[derive(Debug, Clone)]
 pub struct FirstTimePerTurnAttribute {
     pub base_trigger: Trigger,
@@ -631,24 +615,25 @@ pub struct FirstTimePerTurnAttribute {
 
 impl CardAttribute for FirstTimePerTurnAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        info!("FirstTimePerTurnAttribute: trigger = {:?}, used = {}", trigger, self.used);
         match trigger {
             t if *t == self.base_trigger && !self.used => {
                 self.used = true;
-                Some(self.action.clone())
+                let res = Some(self.action.clone());
+                info!("FirstTimePerTurnAttribute: firing action = {:?}", res);
+                res
             }
             Trigger::AtPhase { phase, player: _ } if *phase == self.reset_phase => {
                 self.used = false;
+                info!("FirstTimePerTurnAttribute: reset used flag");
                 None
             }
             _ => None,
         }
     }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
 
-/// DelayedAttribute
 #[derive(Debug, Clone)]
 pub struct DelayedAttribute {
     pub effect: Effect,
@@ -658,17 +643,18 @@ pub struct DelayedAttribute {
 
 impl CardAttribute for DelayedAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
+        info!("DelayedAttribute: received trigger {:?}", trigger);
         if *trigger == Trigger::OnCastResolved {
-            Some(Effect::Delayed {
+            let res = Some(Effect::Delayed {
                 effect: Box::new(self.effect.clone()),
                 phase: self.phase,
                 deps: self.deps.clone(),
-            })
-        } else {
-            None
+            });
+            debug!("DelayedAttribute: scheduling delayed effect = {:?}", res);
+            return res;
         }
+        None
     }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+    fn as_any(&self) -> &dyn Any { self }
 }
+
