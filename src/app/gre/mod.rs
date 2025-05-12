@@ -1,5 +1,6 @@
 // src/app/gre/mod.rs
 
+use crate::app::gre::gre_structs::{DelayedEffect, ReplacementEffect};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use tracing::{debug, info, warn};
 
@@ -17,29 +18,8 @@ pub mod effect_resolution;
 
 // Publikus újra-exportálás, hogy kívülről elérhető legyen
 pub use stack::{StackEntry, PriorityEntry};
-pub use activated_ability::ActivatedAbility;
-pub use delayed_effect::DelayedEffect;
-pub use replacement_effect::ReplacementEffect;
 
-// Az effect_resolution-ból is publikus, amennyiben kívülről is kell
-pub use effect_resolution::{
-    handle_effect,
-    apply_replacement,
-    clone_card,
-    create_creature_token,
-    create_clone_card,
-    current_stack_target,
-    replace_targeted_filter_with_exact,
-    execute,
-};
-
-// A triggerek moduljából:
-pub use trigger::{
-    trigger_event,
-    trigger_event_tree,
-    // stb.
-};
-
+pub use gre_structs::ActivatedAbility;
 /// Ez lesz a "Game Rules Engine" (GRE) maga
 pub struct Gre {
     /// A stack

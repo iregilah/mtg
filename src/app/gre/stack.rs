@@ -3,7 +3,7 @@
 use std::fmt;
 use crate::app::game_state::Player;
 use crate::app::card_library::Card;
-use crate::app::gre::activated_ability::ActivatedAbility;
+use crate::app::gre::gre_structs::ActivatedAbility;
 
 /// StackEntry: Spell, TriggeredAbility, ActivatedAbility
 #[derive(Debug, Clone, PartialEq, Eq)]

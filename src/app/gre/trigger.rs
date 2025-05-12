@@ -9,8 +9,8 @@ use crate::app::card_library::CardType::{Creature};
 use crate::app::card_library::CardTypeFlags;
 use crate::app::gre::Gre; // hivatkozunk a Gre struktúrára
 use crate::app::gre::stack::StackEntry;
-use crate::app::gre::delayed_effect::DelayedEffect;
-use crate::app::gre::replacement_effect::ReplacementEffect;
+use crate::app::gre::gre_structs::DelayedEffect;
+use crate::app::gre::gre_structs::ReplacementEffect;
 use crate::app::card_attribute::{PlayerSelector, Duration};
 
 impl Gre {

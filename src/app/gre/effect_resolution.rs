@@ -7,8 +7,8 @@ use crate::app::card_library::CardTypeFlags;
 use crate::app::game_state::{GamePhase, GameEvent, Player};
 use crate::app::gre::Gre;
 use crate::app::gre::stack::StackEntry;
-use crate::app::gre::delayed_effect::DelayedEffect;
-use crate::app::gre::replacement_effect::ReplacementEffect;
+use crate::app::gre::gre_structs::DelayedEffect;
+use crate::app::gre::gre_structs::ReplacementEffect;
 
 /// Végső effectkezelő: Replacement + Continuous + Execute
 impl Gre {

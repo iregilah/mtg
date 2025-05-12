@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use crate::app::card_attribute::*;
 use crate::app::card_attribute::CardAttribute;
-use crate::app::gre::ActivatedAbility;
+use crate::app::gre::gre_structs::ActivatedAbility;
 use crate::app::game_state::GamePhase;
 use std::hash::{Hash, Hasher};
 use bitflags::bitflags;
