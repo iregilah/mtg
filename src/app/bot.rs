@@ -204,39 +204,69 @@ impl Bot {
 
     /// Cast the first affordable instant, then click on one of our creatures as target.
     pub fn cast_instants_targeting_creature(&mut self, creature_index: usize) {
-        // find and cast one instant
-        if let Some((i, _text)) = self.cards_texts.iter().enumerate().find(|(_, txt)| {
-            self.can_cast_instant() &&
-                build_card_library().values().any(|card| {
-                    matches!(card.card_type, CardType::Instant) &&
-                        Bot::text_contains(&card.name, txt)
+        // 1) Keresünk instantot a kezünkben, elég manával
+        if let Some((i, _)) = self.cards_texts.iter().enumerate()
+            .find(|(_i, txt)| self.can_cast_instant() && {
+                let library = build_card_library();
+                library.values().any(|c| {
+                    matches!(c.card_type, CardType::Instant)
+                        && Bot::text_contains(&c.name, txt)
+                    // mana-check is done in can_cast_instant()
                 })
-        }) {
-            // get the Card struct
+            })
+        {
+            // 2) Kinyerjük a Card szerkezetet
             let card_library = build_card_library();
             if let Some(card) = card_library.values().find(|c| {
-                matches!(c.card_type, CardType::Instant) &&
-                    Bot::text_contains(&c.name, &self.cards_texts[i])
+                matches!(c.card_type, CardType::Instant)
+                    && Bot::text_contains(&c.name, &self.cards_texts[i])
             }) {
-                match self.try_cast_card(i, card) {
-                    Ok(cost) => {
-                        self.land_number = self.land_number.saturating_sub(cost);
-                        // now click on our creature as target
-                        let positions = get_own_creature_positions(
-                            self.battlefield_creatures.len(),
-                            self.screen_width as u32,
-                            self.screen_height as u32,
+                // 3) UI-s kijátszás (kattintás, cost-check, stb.)
+                if let Ok(cost) = self.try_cast_card(i, card) {
+                    self.land_number = self.land_number.saturating_sub(cost);
+
+                    // 4) Rákattintunk a battlefielden az index=creature_index
+                    //    lénypozícióra
+                    let positions = get_own_creature_positions(
+                        self.battlefield_creatures.len(),
+                        self.screen_width as u32,
+                        self.screen_height as u32,
+                    );
+                    if creature_index < positions.len() {
+                        let p = &positions[creature_index];
+                        let click_x = ((p.click_x1 + p.click_x2) / 2) as i32;
+                        let click_y = ((p.click_y1 + p.click_y2) / 2) as i32;
+                        set_cursor_pos(click_x, click_y);
+                        left_click();
+                        info!("Targeted instant at creature #{}", creature_index);
+                    }
+
+                    // 5) **GRE stackre is feltesszük** a Spell
+                    //    Ehhez ki kell keresnünk, melyik
+                    //    creature a 'target' a GRE szemszögéből
+                    if let Some((_, tcard)) = self.battlefield_creatures.iter().nth(creature_index) {
+                        // Betesszük a stackre
+                        self.gre.cast_spell_with_target(
+                            card.clone(),  // ez a Felonious Rage
+                            Player::Us,
+                            tcard.clone(), // a Heartfire Hero pl.
                         );
-                        if creature_index < positions.len() {
-                            let p = &positions[creature_index];
-                            let click_x = ((p.click_x1 + p.click_x2) / 2) as i32;
-                            let click_y = ((p.click_y1 + p.click_y2) / 2) as i32;
-                            set_cursor_pos(click_x, click_y);
-                            left_click();
-                            info!("Targeted instant at creature #{}", creature_index);
+
+                        // 6) A stack feloldása: effectek végrehajtása
+                        self.gre.resolve_stack();
+
+                        // 7) A GRE a belső `battlefield_creatures` map-et módosítja,
+                        //    de utána össze akarjuk szinkronizálni a bot állapotával is.
+                        //    Például frissítsük a bot.battlefield_creatures-t is:
+                        //    (Ha a GRE is ebben a mapben tárolja, nincs plusz teendő,
+                        //     de ha külön van, frissítsük.)
+                        //
+                        // Mindenesetre nézzük meg, mi történt:
+                        info!("=== After resolve_stack() - battlefield ===");
+                        for (name, c) in self.battlefield_creatures.iter() {
+                            info!("   - {} -> {:?}", name, c);
                         }
                     }
-                    Err(e) => warn!("Cannot cast {}: {:?}", card.name, e),
                 }
             }
         }
@@ -491,6 +521,126 @@ impl Bot {
             self.cards_texts.push(text);
         }
         info!("OCR results for cards: {:?}", self.cards_texts);
+    }
+    /// Megnézi, hogy a battlefielden (OCR + merge) van-e legalább 1 saját creature.
+    /// Visszaadja a lények darabszámát.
+    pub fn count_own_creatures_on_battlefield(&mut self) -> usize {
+        // Először frissítjük a battlefieldet (OCR), tokenekkel merge-öljük
+        self.refresh_battlefield();
+
+        // Számoljuk meg azokat, amelyek valóban creature típusúak
+        self.battlefield_creatures
+            .values()
+            .filter(|card| matches!(card.card_type, CardType::Creature(_)))
+            .count()
+    }
+
+    /// Megpróbál egy instant kártyát kijátszani a kezünkből (ha van és elég mana is van),
+    /// majd a paraméterül adott `creature_index` (own creature) koordinátáira kattint, mint célpont.
+    ///
+    /// - `creature_index`: a saját creature-ök listájának indexe (0..N),
+    ///   amelyiket targetelni fogjuk.
+    ///
+    /// Példa-megközelítés:
+    /// 1) Kikeresünk a kezünkből (OCR-szövegből) egy instantot, amit ki tudunk játszani (`can_cast_instant`).
+    /// 2) Meghívjuk a `try_cast_card(...)`-ot. Ha sikerül, frissítjük a mana állapotot.
+    /// 3) Lekérjük a creature pozícióit (`get_own_creature_positions`), kiválasztjuk a `creature_index`-et,
+    ///    és a bounding box közepére kattintunk, hogy targeteljük.
+    ///
+    pub fn cast_instant_target_own_creature(&mut self, creature_index: usize) -> bool {
+        if !self.can_cast_instant() {
+            return false; // nincs instant a kézben vagy nincs rá mana
+        }
+
+        // 1) Keressük meg a kezünkből a legelső instant kártyát, amit ki tudunk játszani.
+        let library = build_card_library();
+        if let Some((hand_idx, card_name)) = self.cards_texts.iter().enumerate()
+            .find(|(_, txt)| {
+                library.values().any(|c| {
+                    matches!(c.card_type, CardType::Instant)
+                        && Self::text_contains(&c.name, txt)
+                })
+            })
+        {
+            // Megvan a kijátszandó kártya neve, most kikeressük magát a Card-ot a library-ben
+            if let Some(card) = library.values().find(|c| {
+                matches!(c.card_type, CardType::Instant) && Self::text_contains(&c.name, &card_name)
+            }) {
+                // 2) Try cast
+                match self.try_cast_card(hand_idx, card) {
+                    Ok(cost_used) => {
+                        self.land_number = self.land_number.saturating_sub(cost_used);
+                        info!("Sikerült kijátszani az instantot: '{}', targeting creature_index={}",
+                              card.name, creature_index);
+
+                        // 3) Megcélozzuk a battlefielden lévő creature-t
+                        let positions = get_own_creature_positions(
+                            self.battlefield_creatures.len(),
+                            self.screen_width as u32,
+                            self.screen_height as u32
+                        );
+                        if creature_index < positions.len() {
+                            let p = &positions[creature_index];
+                            let click_x = ((p.click_x1 + p.click_x2) / 2) as i32;
+                            let click_y = ((p.click_y1 + p.click_y2) / 2) as i32;
+
+                            // kattintás a creature közepére
+                            set_cursor_pos(click_x, click_y);
+                            left_click();
+                            info!("Instant sikeresen targetelte a creature-t a pozíción ({}, {})", click_x, click_y);
+                            return true;
+                        } else {
+                            warn!("Nem létezik creature_index={} a battlefielden.", creature_index);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Nem sikerült kijátszani az instantot: {:?}", e);
+                        return false;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Ezt hívod meg a "creature spam" helyett:
+    /// - Minden loop-iteráció előtt megnézi, van-e lent legalább egy creature
+    ///   (ha még nincs, akkor egyből megy a creature kijátszása).
+    /// - Ha van creature, akkor megpróbál egy instantot kijátszani, célpontolva az **első** creature-t.
+    /// - Majd megpróbálja kijátszani a következő creature-t a kezünkből.
+    /// - Addig ismételjük, amíg tényleg van castolható creature.
+    pub fn cast_creatures_with_instant_before_each(&mut self) {
+        loop {
+            // 0) Ellenőrizzuk, hogy van-e még egyáltalán creature a kezünkben, amit ki bírunk játszani
+            if !self.can_cast_creature() {
+                info!("Nincs több kijátszható creature a kézben, kilépünk a loopból.");
+                break;
+            }
+
+            // 1) Battlefield frissítés
+            let creature_count = self.count_own_creatures_on_battlefield();
+
+            // 2) Ha van lent legalább 1 creature és van castolható instant, akkor cast_on_creature
+            if creature_count > 0 && self.can_cast_instant() {
+                // pl. a 0. indexű creature-t célozzuk
+                let targeted = self.cast_instant_target_own_creature(0);
+                if targeted {
+                    // Itt még lehetne stack resolution, GRE-check, stb.,
+                    // de a kód prototípus-szinten illusztratív.
+                }
+            }
+
+            // 3) Most jöhet a creature kijátszása (a legelső, amit ki tudunk játszani).
+            if let Some((name, cost_used)) = self.cast_one_creature() {
+                info!("Creature kijátszva: '{}', mana_költség={}", name, cost_used);
+                // A cast_one_creature() belül remove-olja a lapot a kezünkből
+                // és be is rakja a battlefield_creatures map-be.
+                self.land_number = self.land_number.saturating_sub(cost_used);
+            } else {
+                // Nem talált semmit, amit kijátszhatnánk -> kilépünk
+                break;
+            }
+        }
     }
 }
 

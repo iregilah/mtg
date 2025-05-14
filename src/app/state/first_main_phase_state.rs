@@ -1,11 +1,9 @@
 // app/state/first_main_phase_state.rs
 
 use std::any::Any;
-//use std::{thread::sleep, time::Duration};
 use crate::app::error::AppError;
-use tracing::warn;
+use tracing::{info, warn};
 use crate::app::game_state::GamePhase;
-use tracing::{info};
 
 use crate::app::{
     bot::Bot,
@@ -98,14 +96,32 @@ impl FirstMainPhaseState {
         info!("Available mana after playing land: {}", bot.land_number);
     }
 
+    /// Itt integráljuk a creature-kijátszás előtti instant-célozást.
     fn cast_main_phase_creatures(&mut self, bot: &mut Bot) {
         let library = build_card_library();
-        while bot.land_number > 0 {
-            if let Some((name, cost)) = bot.cast_one_creature() {
-                info!("Successfully cast '{}', spent {} mana.", name, cost);
-                bot.land_number = bot.land_number.saturating_sub(cost);
 
-                // allow duplicate keys
+        loop {
+            // Ellenőrizzük, van-e még legalább 1 kijátszható creature a kezünkben (mana is legyen).
+            if !bot.can_cast_creature() {
+                info!("No more affordable creatures left to cast.");
+                break;
+            }
+
+            // Nézzük meg, hány creature van lent. Ha van >=1 és castolható instant, célozzuk a 0. indexűt.
+            let creature_count = bot.count_own_creatures_on_battlefield();
+            if creature_count > 0 && bot.can_cast_instant() {
+                let targeted = bot.cast_instant_target_own_creature(0);
+                if targeted {
+                    info!("Successfully cast an instant targeting our creature before playing another creature.");
+                }
+            }
+
+            // Most megpróbálunk kijátszani 1 creaturét a kezünkből
+            if let Some((name, cost_used)) = bot.cast_one_creature() {
+                info!("Successfully cast '{}', spent {} mana.", name, cost_used);
+                bot.land_number = bot.land_number.saturating_sub(cost_used);
+
+                // Allow duplicate keys
                 let mut key = name.clone();
                 if bot.battlefield_creatures.contains_key(&key) {
                     let dup = bot
@@ -117,21 +133,20 @@ impl FirstMainPhaseState {
                     key = format!("{}#{}", name, dup);
                 }
 
-                // insert new creature tapped
+                // Insert new creature tapped
                 if let Some(mut card) = library.get(&name).cloned() {
-                    // 1) insert tapped
+                    // (1) Betesszük summoning sickness-szel
                     if let CardType::Creature(ref mut cr) = card.card_type {
                         cr.summoning_sickness = true;
                     }
                     bot.battlefield_creatures.insert(key.clone(), card.clone());
 
-                    // 2) immediately clear summoning sickness if it has haste
+                    // (2) Ha van Haste, akkor azonnal feloldjuk a sickness-t
                     if let Some(entry) = bot.battlefield_creatures.get_mut(&key) {
                         let has_haste = entry
                             .attributes
                             .iter()
                             .any(|attr| {
-                                // coerce the CardAttribute trait object to &dyn Any, then downcast
                                 let any = attr.as_ref() as &dyn Any;
                                 any.downcast_ref::<GrantAbilityAttribute>()
                                     .map_or(false, |ga| ga.ability == KeywordAbility::Haste)
@@ -150,7 +165,7 @@ impl FirstMainPhaseState {
                     bot.battlefield_creatures
                 );
 
-                // ha még van mana és van mit castolni, frissítjük az OCR-es battlefield-et
+                // Ha maradt még mana, és továbbra is kijátszhatunk creature-t, frissítjük az OCR-t
                 if bot.land_number > 0 && bot.can_cast_creature() {
                     info!("Still have mana & creatures to cast: refreshing battlefield OCR.");
 
@@ -179,6 +194,8 @@ impl FirstMainPhaseState {
     }
 
     fn cast_other_spells(&self, bot: &mut Bot) {
+        // Ez a metódus maradhat a régi logika szerint (pl. sorceryk, stb.),
+        // ha más típusú lapokat is kijátszanánk
         let spent = bot.cast_creatures();
         bot.land_number = spent;
         if spent > 0 {

@@ -19,6 +19,7 @@ pub mod effect_resolution;
 // Publikus újra-exportálás, hogy kívülről elérhető legyen
 pub use stack::{StackEntry, PriorityEntry};
 pub use gre_structs::ActivatedAbility;
+
 /// Ez lesz a "Game Rules Engine" (GRE) maga
 pub struct Gre {
     /// A stack
@@ -82,7 +83,6 @@ impl Default for Gre {
 
 // Metódusok, amiket itt hagyunk (például):
 impl Gre {
-
     pub fn on_turn_end(&mut self) {
         info!("on_turn_end() -> turn is ending, reset life-lost flags & death_triggers.");
         self.opponent_lost_life_this_turn = false;
@@ -148,7 +148,27 @@ impl Gre {
                     info!("  -> Resolving Spell '{}'", card.name);
                     let mut c = card.clone();
                     self.enter_battlefield(&mut c);
-
+                    if c.type_flags.contains(CardTypeFlags::INSTANT)
+                        || c.type_flags.contains(CardTypeFlags::SORCERY)
+                    {
+                        // közvetlenül OnCastResolved effektek:
+                        let effects = c.trigger_by(&Trigger::OnCastResolved);
+                        for eff in effects {
+                            let final_e = if let Some(tcard) = &target_creature {
+                                effect_resolution::replace_targeted_filter_with_exact(self, eff, tcard)
+                            } else {
+                                eff
+                            };
+                            self.handle_effect(final_e);
+                        }
+                    } else {
+                        self.enter_battlefield(&mut c);
+                        // OnCastResolved effektek:
+                        let effects = c.trigger_by(&Trigger::OnCastResolved);
+                        for eff in effects {
+                            self.handle_effect(eff);
+                        }
+                    }
                     self.trigger_event(
                         GameEvent::SpellResolved(card.name.clone()),
                         &mut Vec::new(),
