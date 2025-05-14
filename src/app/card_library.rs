@@ -5,6 +5,7 @@ use crate::app::gre::gre_structs::ActivatedAbility;
 use crate::app::game_state::GamePhase;
 use std::hash::{Hash, Hasher};
 use bitflags::bitflags;
+use tracing::debug;
 use crate::app::card_attribute::CreatureType::Detective;
 
 const CACOPHONY_SCAMP: &str = "Cacophony Scamp";
@@ -212,6 +213,45 @@ impl Card {
                 }
             })
             .collect()
+    }
+    /// Általános kártya-klónozó: bemenet az eredeti Card, plusz opcionális power/toughness
+    /// felülírás, plusz bitflag hozzáadás.
+    pub fn clone_card(
+        original: &Card,
+        new_power: Option<i32>,
+        new_toughness: Option<i32>,
+        added_flags: Option<CardTypeFlags>,
+    ) -> Card {
+        debug!("clone_card called: original id={}, name='{}', new_power={:?}, new_toughness={:?}, added_flags={:?}",
+           original.card_id, original.name, new_power, new_toughness, added_flags);
+
+        let mut cloned = original.clone();
+
+        if let CardType::Creature(ref mut cr) = cloned.card_type {
+            if let Some(p) = new_power {
+                debug!("clone_card: setting new power {} (was {})", p, cr.power);
+                cr.power = p;
+            }
+            if let Some(t) = new_toughness {
+                debug!("clone_card: setting new toughness {} (was {})", t, cr.toughness);
+                cr.toughness = t;
+            }
+        }
+
+        if let Some(flags) = added_flags {
+            debug!("clone_card: adding flags {:?}", flags);
+            cloned.type_flags |= flags;
+        }
+
+        // Kiírás a visszaadott másolatról
+        let (final_power, final_toughness) = match cloned.card_type {
+            CardType::Creature(ref cr) => (cr.power, cr.toughness),
+            _ => (0, 0),
+        };
+        debug!("clone_card returning: cloned id={}, name='{}', power={}, toughness={}, flags={:?}",
+           cloned.card_id, cloned.name, final_power, final_toughness, cloned.type_flags);
+
+        cloned
     }
 }
 

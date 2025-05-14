@@ -4,9 +4,9 @@ use crate::app::gre::gre_structs::{DelayedEffect, ReplacementEffect};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use tracing::{debug, info, warn};
 
-use crate::app::card_library::{Card, CardType};
+use crate::app::card_library::{Card, CardType, Creature, ManaCost};
 use crate::app::card_library::CardTypeFlags;
-use crate::app::card_attribute::{Effect, Condition, Duration, PlayerSelector, CreatureType, TargetFilter};
+use crate::app::card_attribute::{Effect, Condition, Duration, PlayerSelector, CreatureType, TargetFilter, Trigger};
 use crate::app::game_state::{GamePhase, GameEvent, Player};
 
 
@@ -18,7 +18,6 @@ pub mod effect_resolution;
 
 // Publikus újra-exportálás, hogy kívülről elérhető legyen
 pub use stack::{StackEntry, PriorityEntry};
-
 pub use gre_structs::ActivatedAbility;
 /// Ez lesz a "Game Rules Engine" (GRE) maga
 pub struct Gre {
@@ -199,5 +198,133 @@ impl Gre {
         } else {
             debug!("  -> stack is empty, nothing to pop.");
         }
+    }
+
+    /// Replacement effect hozzáadása
+    pub fn add_replacement_effect<F>(&mut self, priority: u8, f: F)
+    where
+        F: 'static + Fn(&Effect) -> Option<Vec<Effect>>,
+    {
+        self.replacement_effects.push(ReplacementEffect {
+            priority,
+            f: Box::new(f),
+        });
+        // Legyen csökkenő sorrend a priority alapján
+        self.replacement_effects.sort_by(|a, b| b.priority.cmp(&a.priority));
+    }
+
+    /// Continuous (folyamatos) effect hozzáadása
+    pub fn add_continuous_effect<F>(&mut self, effect: F)
+    where
+        F: 'static + Fn(&mut Effect),
+    {
+        self.continuous_effects.push(Box::new(effect));
+    }
+
+    /// Delayed effect ütemezése egy adott fázisra
+    pub fn schedule_delayed(&mut self, effect: Effect, phase: GamePhase, depends_on: Vec<usize>) -> usize {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.delayed.push(DelayedEffect {
+            effect,
+            execute_phase: phase,
+            id,
+            depends_on,
+        });
+        id
+    }
+
+    /// Delayed effectek futtatása az aktuális fázisban
+    pub fn dispatch_delayed(&mut self, current_phase: GamePhase) {
+        info!("dispatch_delayed() -> current_phase={:?}", current_phase);
+        let mut still = Vec::new();
+
+        // Kikeressük az éppen most lefuttatható delayed effecteket
+        let mut ready: Vec<_> = self.delayed.drain(..)
+            .filter(|d| {
+                d.execute_phase == current_phase
+                    && d.depends_on.iter().all(|dep| self.executed_delayed.contains(dep))
+            })
+            .collect();
+
+        // A többit visszatesszük
+        for d in self.delayed.drain(..) {
+            still.push(d);
+        }
+        self.delayed = still;
+
+        // Rendezés id alapján
+        ready.sort_by_key(|d| d.id);
+
+        // Lefuttatjuk
+        for d in ready {
+            info!("  Dispatching delayed effect #{} at {:?}", d.id, current_phase);
+            self.executed_delayed.insert(d.id);
+            self.handle_effect(d.effect.clone());
+        }
+    }
+
+    pub fn current_stack_target(gre: &Gre) -> Option<Card> {
+        if let Some(pe) = gre.stack.peek() {
+            match &pe.entry {
+                StackEntry::Spell { target_creature: Some(t), .. } => Some(t.clone()),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+    /// Betesszük a kártyát a battlefieldre, automatikusan kiosztva neki az egyedi ID-t.
+    pub fn enter_battlefield(&mut self, card: &mut Card) {
+        if card.card_id == 0 {
+            card.card_id = self.next_card_id;
+            self.next_card_id += 1;
+        }
+        let new_id = card.card_id;
+        info!("enter_battlefield() -> adding '{}' (id={}) to battlefield", card.name, new_id);
+
+        self.battlefield_creatures.insert(new_id, card.clone());
+
+        // OnEnterBattlefield triggerek
+        let effects = card.trigger_by(&Trigger::OnEnterBattlefield {
+            filter: TargetFilter::SelfCard,
+        });
+        debug!("  card '{}' -> OnEnterBattlefield returned {} effect(s)", card.name, effects.len());
+        for eff in effects {
+            self.handle_effect(eff);
+        }
+    }
+
+    pub fn create_creature_token(
+        &mut self,
+        name: &str,
+        power: i32,
+        toughness: i32,
+        creature_types: Vec<crate::app::card_attribute::CreatureType>,
+    ) {
+        info!("create_creature_token() -> name='{}', power={}, toughness={}, types={:?}",
+          name, power, toughness, creature_types);
+
+        let mut new_card = Card::new(
+            name,
+            CardType::Creature(Creature {
+                power,
+                toughness,
+                summoning_sickness: true,
+                abilities: Vec::new(),
+                types: creature_types,
+            }),
+            ManaCost::free(),
+        )
+            .with_added_type(CardTypeFlags::CREATURE)
+            .with_added_type(CardTypeFlags::TOKEN);
+
+        self.enter_battlefield(&mut new_card);
+        debug!("  creature_token létrehozva és battlefiedre került: '{}'", name);
+    }
+
+    pub fn create_clone_card(gre: &mut Gre, mut cloned: Card) {
+        info!("create_clone_card() -> cloning card '{}' (id={}) and placing on battlefield", cloned.name, cloned.card_id);
+        gre.enter_battlefield(&mut cloned);
     }
 }
