@@ -4,18 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# Windows API (Win32) for pixel capture and input simulation
-windows = { version = "0.60.0", features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System", "Win32_System_SystemServices", "Win32_System_Diagnostics", "Win32_System_Diagnostics_Debug", "Win32_UI_HiDpi"] }
-
-# X11 bindings (Xlib + XTest for input events)
-x11 = { version = "2.21.0", optional = true }
-
-# Wayland client and protocol bindings (only for Unix-based platforms)
-wayland-client = { version = "0.31.8", optional = true }
-wayland-protocols = { version = "0.32.6", features = ["client"], optional = true }
-wayland-protocols-wlr = { version = "0.3.6", features = ["client"], optional = true }
-wayland-protocols-misc = { version = "0.3.6", features = ["client"], optional = true }
-
 chrono = "0.4.40"
 screenshots = "0.8.10"
 image = "0.25.5"
@@ -32,13 +20,3 @@ winapi = "0.3.9"
 libc = "0.2.170"
 enigo = "0.3.0"
 
-[[bin]]
-name = "creature_reading_test"
-path = "tests/creature_reading_test.rs"
-
-[features]
-# Default feature flag includes the Wayland feature
-default = []
-
-# Wayland feature flag includes the related dependencies
-wayland = ["wayland-client", "wayland-protocols", "wayland-protocols-wlr", "wayland-protocols-misc"]

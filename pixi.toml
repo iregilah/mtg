@@ -1,0 +1,24 @@
+[workspace]
+authors = ["iregilah <halasz.gergo44@gmail.com>"]
+channels = ["conda-forge"]
+name = "mtg-player-agent"
+platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
+version = "0.1.0"
+description = "Magic The Gathering Player Agent"
+requires-pixi = ">=0.40"
+
+[tasks]
+build = "cargo build"
+start = { cmd = "cargo run --locked", depends_on = ["build"] }
+[dependencies]
+rust = "*"
+
+
+[target.linux-64.dependencies]
+xorg-libx11        = "*"
+xorg-libxtst       = "*"
+# Wayland protokollok, ha Wayland alatt futna
+wayland            = "*"
+wayland-protocols  = "*"
+# pkg-config, hogy a Rust build-script-ek megtalálják a natív könyvtárakat
+pkg-config         = "*"
