@@ -30,6 +30,9 @@ pub struct Creature {
     pub summoning_sickness: bool,
     pub abilities: Vec<KeywordAbility>,
     pub types: Vec<CreatureType>,
+
+    pub ephemeral_power: i32,
+    pub ephemeral_toughness: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -270,6 +273,8 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 summoning_sickness: true,
                 abilities: Vec::new(),
                 types: vec![CreatureType::Phyrexian, CreatureType::Goblin, CreatureType::Warrior],
+                ephemeral_power: 0,
+                ephemeral_toughness: 0,
             }),
             ManaCost::new(0, 1, 0, 0, 0, 0),
         )
@@ -303,6 +308,8 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 summoning_sickness: true,
                 abilities: Vec::new(),
                 types: vec![CreatureType::Human, CreatureType::Monk],
+                ephemeral_power: 0,
+                ephemeral_toughness: 0,
             }),
             ManaCost::new(0, 1, 0, 0, 0, 0),
         )
@@ -336,6 +343,8 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 summoning_sickness: true,
                 abilities: Vec::new(),
                 types: vec![CreatureType::Dwarf, CreatureType::Wizard],
+                ephemeral_power: 0,
+                ephemeral_toughness: 0,
             }),
             ManaCost::new(1, 1, 0, 0, 0, 0),
         )
@@ -368,6 +377,8 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 summoning_sickness: true,
                 abilities: Vec::new(),
                 types: vec![CreatureType::Mouse, CreatureType::Soldier],
+                ephemeral_power: 0,
+                ephemeral_toughness: 0,
             }),
             ManaCost::new(0, 1, 0, 0, 0, 0),
         )
@@ -397,6 +408,8 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 summoning_sickness: true,
                 abilities: vec![KeywordAbility::Haste],
                 types: vec![CreatureType::Spirit],
+                ephemeral_power: 0,
+                ephemeral_toughness: 0,
             }),
             ManaCost::new(2, 1, 0, 0, 0, 0),
         )
@@ -441,6 +454,8 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 summoning_sickness: true,
                 abilities: Vec::new(),
                 types: vec![CreatureType::Lizard, CreatureType::Mercenary],
+                ephemeral_power: 0,
+                ephemeral_toughness: 0,
             }),
             ManaCost::new(0, 1, 0, 0, 0, 0),
         )
@@ -480,6 +495,8 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 summoning_sickness: true,
                 abilities: Vec::new(),
                 types: vec![CreatureType::Mouse, CreatureType::Soldier],
+                ephemeral_power: 0,
+                ephemeral_toughness: 0,
             }),
             ManaCost::new(1, 1, 0, 0, 0, 0),
         )
@@ -529,6 +546,8 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 summoning_sickness: true,
                 abilities: vec![KeywordAbility::Flying, KeywordAbility::Haste],
                 types: vec![CreatureType::Bird, CreatureType::Wizard],
+                ephemeral_power: 0,
+                ephemeral_toughness: 0,
             }),
             ManaCost::new(1, 1, 0, 0, 0, 0),
         )
@@ -554,6 +573,8 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 summoning_sickness: true,
                 abilities: vec![],
                 types: vec![CreatureType::Human, CreatureType::Monk],
+                ephemeral_power: 0,
+                ephemeral_toughness: 0,
             }),
             ManaCost::new(1, 1, 0, 0, 0, 0),
         )
@@ -585,6 +606,8 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 summoning_sickness: true,
                 abilities: vec![KeywordAbility::Haste],
                 types: vec![CreatureType::Mouse, CreatureType::Warrior],
+                ephemeral_power: 0,
+                ephemeral_toughness: 0,
             }),
             ManaCost::new(1, 1, 0, 0, 0, 0),
         )

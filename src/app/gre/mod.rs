@@ -19,6 +19,7 @@ pub mod effect_resolution;
 // Publikus újra-exportálás, hogy kívülről elérhető legyen
 pub use stack::{StackEntry, PriorityEntry};
 pub use gre_structs::ActivatedAbility;
+use crate::app::gre::effect_resolution::replace_targeted_filter_with_exact;
 
 /// Ez lesz a "Game Rules Engine" (GRE) maga
 pub struct Gre {
@@ -123,7 +124,13 @@ impl Gre {
     }
 
     pub fn cast_spell_with_target(&mut self, card: Card, controller: Player, target: Card) {
-        info!("{:?} casts '{}', target='{}'", controller, card.name, target.name);
+        // Először mentsük ki a card_id–t (és ha kell, a nevet is).
+        let target_id = target.card_id;
+        let target_name = target.name.clone();  // ha a nevét is ki akarod írni
+
+        info!("{:?} casts '{}', target='{}'", controller, card.name, target_name);
+
+        // Ezután konstruáljuk a StackEntry::Spell‐t, ezzel "belemovoljuk" a 'target'‐et.
         let entry = StackEntry::Spell {
             card,
             controller,
@@ -131,6 +138,9 @@ impl Gre {
         };
         self.push(entry, 0);
         self.reset_priority();
+
+        // Végül meghívjuk a “Targeted” eseményt a kimentett 'target_id' alapján
+        self.trigger_event(GameEvent::Targeted(target_id), &mut Vec::new(), controller);
     }
 
     pub fn activate_ability(&mut self, source: Card, ability: crate::app::gre::ActivatedAbility, controller: Player) {
@@ -145,32 +155,77 @@ impl Gre {
             info!("  popped top: {:?}", pe.entry);
             match pe.entry {
                 StackEntry::Spell { card, controller, target_creature } => {
+                    // Itt mentsük el lokálisan a célpontot
+                    let local_target = target_creature.clone();
+
                     info!("  -> Resolving Spell '{}'", card.name);
                     let mut c = card.clone();
                     self.enter_battlefield(&mut c);
-                    if c.type_flags.contains(CardTypeFlags::INSTANT)
-                        || c.type_flags.contains(CardTypeFlags::SORCERY)
-                    {
-                        // közvetlenül OnCastResolved effektek:
-                        let effects = c.trigger_by(&Trigger::OnCastResolved);
-                        for eff in effects {
-                            let final_eff = if let Some(tcard) = &target_creature {
-                                effect_resolution::replace_targeted_filter_with_exact(self, eff, tcard)
-                            } else {
-                                eff
-                            };
-                            self.handle_effect(final_eff);
-                        }
-                    } else {
-                        self.enter_battlefield(&mut c);
-                        // OnCastResolved effektek:
-                        let effects = c.trigger_by(&Trigger::OnCastResolved);
-                        for eff in effects {
-                            self.handle_effect(eff);
+
+                    // Ha instant/sorcery, OnCastResolved triggereket futtatunk
+                    let effects = c.trigger_by(&Trigger::OnCastResolved);
+                    for eff in effects {
+                        match eff {
+                            Effect::TargetedEffects { sub_effects } => {
+                                if let Some(ref actual_target) = local_target {
+                                    // itt a sub_effects mindegyikét local_target szerint dolgozzuk fel:
+                                    for subeff in sub_effects {
+                                        match subeff {
+                                            // Ha a WhenTargetDiesThisTurn effektre futunk,
+                                            // ne a current_stack_target()–et kérdezzük,
+                                            // hanem használjuk az actual_target–et:
+                                            Effect::WhenTargetDiesThisTurn { effect } => {
+                                                // regisztráljuk a death_triggers_this_turn listába
+                                                self.death_triggers_this_turn.push((
+                                                    actual_target.clone(),
+                                                    *effect, // pl. a CreateCreatureToken effect
+                                                ));
+                                            }
+                                            Effect::CreateEnchantmentToken { name, power_buff, toughness_buff, ability } => {
+                                                // Pl.:
+                                                info!("Lokális 'actual_target' van => Létrehozzuk a token aura-t a '{}'-hez", actual_target.name);
+
+                                                // Lényegében ugyanaz a kód, mint a `execute()`–beli CreateEnchantmentToken ága,
+                                                // de a 'target_card' helyett 'actual_target'–et használunk:
+                                                let mut aura_card = Card::new(
+                                                    &name,
+                                                    CardType::Enchantment,
+                                                    ManaCost::free(),
+                                                )
+                                                    .with_added_type(CardTypeFlags::TOKEN);
+
+                                                aura_card.attached_to = Some(actual_target.card_id);
+
+                                                // OnEnterBattlefield: +X/+Y, GrantAbility(Trample) ...
+                                                // OnDeath: -X/-Y, RemoveAbility(Trample)
+                                                // ...
+                                                // Végül
+                                                self.enter_battlefield(&mut aura_card);
+                                                info!("'{}' enchantment token létrehozva és a(z) '{}' lényhez csatolva.",
+                                                     name, actual_target.name);
+                                            }
+                                            // egyéb sub–effektek (ModifyStats, GrantAbility, stb.)
+                                            other => {
+                                                let replaced =
+                                                    replace_targeted_filter_with_exact(self, other, actual_target);
+                                                self.handle_effect(replaced);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    warn!("Nincs local_target, átugorjuk a sub_effects végrehajtást.");
+                                }
+                            }
+                            _ => {
+                                // Minden más effectet a handle_effect‐tel futtatunk
+                                self.handle_effect(eff);
+                            }
                         }
                     }
+
+                    // További események pl. SpellResolved...
                     self.trigger_event(
-                        GameEvent::SpellResolved(card.name.clone()),
+                        GameEvent::SpellResolved(c.name.clone()),
                         &mut Vec::new(),
                         controller,
                     );
@@ -333,6 +388,8 @@ impl Gre {
                 summoning_sickness: true,
                 abilities: Vec::new(),
                 types: creature_types,
+                ephemeral_power: 0,
+                ephemeral_toughness: 0,
             }),
             ManaCost::free(),
         )

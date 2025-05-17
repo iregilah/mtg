@@ -33,6 +33,7 @@ pub enum GameEvent {
     Custom(String),
     PhaseChange(GamePhase),
     OnCombatDamage,
+    Targeted(u64),
 }
 
 /// Internal game phases for effect timing

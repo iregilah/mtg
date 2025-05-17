@@ -1,7 +1,7 @@
 // src/app/gre/effect_resolution.rs
 
 use tracing::{debug, info, warn};
-use crate::app::card_attribute::{Effect, TargetFilter, Duration, Amount, PlayerSelector, TriggeredEffectAttribute, Trigger};
+use crate::app::card_attribute::{Effect, TargetFilter, Duration, Amount, PlayerSelector, TriggeredEffectAttribute, Trigger, CounterType};
 use crate::app::card_library::{Card, CardType, Creature, ManaCost};
 use crate::app::card_library::CardTypeFlags;
 use crate::app::game_state::{GamePhase, GameEvent, Player};
@@ -50,6 +50,54 @@ impl Gre {
     pub fn execute(&mut self, effect: Effect) {
         info!("GRE.execute() → Indul az effect végrehajtása: {:?}", effect);
         match effect {
+            Effect::ModifyStats {
+                power_delta,
+                toughness_delta,
+                duration,
+                target,
+            } => {
+                match (duration, target) {
+                    (Duration::EndOfTurn, TargetFilter::ExactCardID(cid)) => {
+                        // 1) Kikeressük a battlefield_creatures mapből:
+                        if let Some(card) = self.battlefield_creatures.get_mut(&cid) {
+                            // Ha ez creature, hozzáadjuk az ephemeral buffot:
+                            if let CardType::Creature(ref mut cr) = card.card_type {
+                                // Ha még nincs ephemeral mező, bővítsd a Creature structot lásd lent
+                                cr.ephemeral_power += power_delta;
+                                cr.ephemeral_toughness += toughness_delta;
+                                info!("  -> Ideiglenes buff: +({}/{}) a kör végéig '{}' (id={}) lénnyel.",
+                                  power_delta, toughness_delta, card.name, cid);
+                            }
+                            // 2) Ütemezzük a visszavonást a kör végére:
+                            let revert_effect = Effect::ModifyStats {
+                                power_delta: -power_delta,
+                                toughness_delta: -toughness_delta,
+                                duration: Duration::Permanent, // fixen csökkentjük majd
+                                target: TargetFilter::ExactCardID(cid),
+                            };
+                            self.schedule_delayed(revert_effect, GamePhase::End, vec![]);
+                        }
+                    }
+
+                    (Duration::Permanent, TargetFilter::ExactCardID(cid)) => {
+                        // Ez a "maradandó" stat-módosítás (pl. CreateEnchantmentToken)
+                        if let Some(card) = self.battlefield_creatures.get_mut(&cid) {
+                            if let CardType::Creature(ref mut cr) = card.card_type {
+                                // Ráadásul itt közvetlenül a base power/toughness-t növeljük
+                                cr.power += power_delta;
+                                cr.toughness += toughness_delta;
+                                info!("  -> Permanent stat change: +({}/{}) '{}'(id={})",
+                                  power_delta, toughness_delta, card.name, cid);
+                            }
+                        }
+                    }
+
+                    (_, _) => {
+                        // minden más esetet logolj, vagy hagyd üresen
+                        info!("ModifyStats: ismeretlen target/duration, átugorjuk.");
+                    }
+                }
+            }
             Effect::CreateEnchantmentToken {
                 name,
                 power_buff,
@@ -141,6 +189,31 @@ impl Gre {
                           name, target_card.name);
                 } else {
                     warn!("  Nincs target a CreateEnchantmentToken-höz, kihagyjuk.");
+                }
+            }
+
+            Effect::AddCounter { counter, amount, target } => {
+                match target {
+                    TargetFilter::ExactCardID(cid) => {
+                        if let Some(card) = self.battlefield_creatures.get_mut(&cid) {
+                            if let CardType::Creature(ref mut cr) = card.card_type {
+                                match counter {
+                                    CounterType::PlusOnePlusOne => {
+                                        // pl. növeled a creature base stats–át
+                                        // VAGY tárolsz egy plus_one_counters: i32 mezőt, stb.
+                                        cr.power += amount as i32;
+                                        cr.toughness += amount as i32;
+                                        info!("'{}' kap {} db +1/+1 countert => most base {}/{}",
+                                    card.name, amount, cr.power, cr.toughness);
+                                    }
+                                    _ => { /* loyalty counters, stb. ha akarsz */ }
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        warn!("AddCounter: nem ExactCardID, átugorjuk");
+                    }
                 }
             }
 

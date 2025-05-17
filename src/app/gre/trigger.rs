@@ -1,7 +1,7 @@
 // src/app/gre/trigger.rs
 
 use tracing::{debug, info, warn};
-use crate::app::card_attribute::Effect;
+use crate::app::card_attribute::{Effect, Trigger};
 use crate::app::card_attribute::TargetFilter;
 use crate::app::game_state::{GameEvent, GamePhase, Player};
 use crate::app::card_library::Card;
@@ -41,11 +41,37 @@ impl Gre {
                 self.death_triggers_this_turn.remove(i);
             }
         }
-
+        if let GameEvent::Targeted(tid) = event {
+            let mut batch = Vec::new();
+            // Végigmegyünk a GRE saját 'battlefield_creatures' mapjén
+            // (ez a te belső nyilvántartásod a lényekről).
+            for (_id, c) in self.battlefield_creatures.iter_mut() {
+                if c.card_id == tid {
+                    // Ha a kártyában van OnTargetedFirstTimeEachTurn { filter: SelfCard },
+                    // akkor ez a "trigger_by(...)" hívás lekéri az effect(ek)et.
+                    let triggered_effects = c.trigger_by(&Trigger::OnTargetedFirstTimeEachTurn {
+                        filter: TargetFilter::SelfCard,
+                    });
+                    for eff in triggered_effects {
+                        batch.push((c.clone(), eff));
+                    }
+                }
+            }
+            // A begyűjtött effecteket stackre tesszük TriggeredAbility formájában:
+            for (source_card, eff) in batch {
+                self.push_to_stack(StackEntry::TriggeredAbility {
+                    source: Some(source_card),
+                    effect: eff,
+                    controller,
+                });
+            }
+        }
         // A battlefield kártyáin végigmegyünk
         let mut batch = Vec::new();
         for card in battlefield.iter_mut() {
             let effects = match &event {
+
+
                 GameEvent::SpellResolved(_spell_name) => {
                     card.trigger_by(&crate::app::card_attribute::Trigger::OnCastResolved)
                 }

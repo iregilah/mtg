@@ -160,7 +160,7 @@ impl Bot {
         sleep(Duration::from_secs(1));
     }
     /// Refresh battlefield OCR and merge tracked tokens
-    pub fn refresh_battlefield(&mut self) {
+    /*pub fn refresh_battlefield(&mut self) {
         let ours_ocr = load_side_creatures(
             self.screen_width as u32,
             self.screen_height as u32,
@@ -181,6 +181,53 @@ impl Bot {
             true,
         );
         let mut opp_merged = opp_ocr;
+        for (name, card) in self.battlefield_opponent_creatures.iter() {
+            if card.type_flags.contains(CardTypeFlags::TOKEN) {
+                opp_merged.insert(name.clone(), card.clone());
+            }
+        }
+        self.battlefield_opponent_creatures = opp_merged;
+    }*/
+
+    pub fn refresh_battlefield(&mut self) {
+        let ours_ocr = load_side_creatures(
+            self.screen_width as u32,
+            self.screen_height as u32,
+            false,
+        );
+
+        // 1) Létrehozunk egy üres mapet, ebbe fog menni a "végleges" merged
+        let mut merged = HashMap::new();
+
+        // 2) Végigmegyünk az OCR-rel felismert kártyákon
+        for (name, card) in ours_ocr {
+            let mut c = card;
+            // Itt hívod a GRE-t, hogy adjon neki card_id-t
+            self.gre.enter_battlefield(&mut c);
+
+            // Ezután betesszük a merged mapbe
+            merged.insert(name, c);
+        }
+
+        // 3) Megőrizzük a régi self.battlefield_creatures-ből a tokeneket
+        for (name, card) in self.battlefield_creatures.iter() {
+            if card.type_flags.contains(CardTypeFlags::TOKEN) {
+                merged.insert(name.clone(), card.clone());
+            }
+        }
+        self.battlefield_creatures = merged;
+
+        // 4) Ugyanez a logika az ellenfél lényeire is:
+        let opp_ocr = load_side_creatures(
+            self.screen_width as u32,
+            self.screen_height as u32,
+            true,);
+        let mut opp_merged = HashMap::new();
+        for (name, card) in opp_ocr {
+            let mut c = card;
+            self.gre.enter_battlefield(&mut c);
+            opp_merged.insert(name, c);
+        }
         for (name, card) in self.battlefield_opponent_creatures.iter() {
             if card.type_flags.contains(CardTypeFlags::TOKEN) {
                 opp_merged.insert(name.clone(), card.clone());
@@ -263,8 +310,23 @@ impl Bot {
                         //
                         // Mindenesetre nézzük meg, mi történt:
                         info!("=== After resolve_stack() - battlefield ===");
-                        for (name, c) in self.battlefield_creatures.iter() {
-                            info!("   - {} -> {:?}", name, c);
+                        for (name, card) in &self.battlefield_creatures {
+                            if let CardType::Creature(cr) = &card.card_type {
+                                let total_power = cr.power + cr.ephemeral_power;
+                                let total_toughness = cr.toughness + cr.ephemeral_toughness;
+                                info!(
+                                    "[{}] => base: {}/{} + ephemeral: {}/{} = total: {}/{}",
+                                    name,
+                                    cr.power,
+                                    cr.toughness,
+                                    cr.ephemeral_power,
+                                    cr.ephemeral_toughness,
+                                    total_power,
+                                    total_toughness
+                                );
+                            } else {
+                                info!("[{}] => {:?}", name, card.card_type);
+                            }
                         }
                     }
                 }
@@ -577,7 +639,7 @@ impl Bot {
                         let positions = get_own_creature_positions(
                             self.battlefield_creatures.len(),
                             self.screen_width as u32,
-                            self.screen_height as u32
+                            self.screen_height as u32,
                         );
                         if creature_index < positions.len() {
                             let p = &positions[creature_index];
