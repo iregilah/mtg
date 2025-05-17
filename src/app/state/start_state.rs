@@ -46,19 +46,19 @@ impl State<AppError> for StartState {
     fn update(&mut self, bot: &mut Bot) -> Result<(), AppError> {
         info!("StartState: initiating game start.");
         // 1) beállítjuk a bot.card_count mezőt, és beolvassuk a kezet
-        // sleep(Duration::from_secs(2));
-       // bot.land_number = 2;
-//.land_count = 2;
-     //   let initial_hand_count = 6;
-     //   bot.card_count = initial_hand_count;
-      //  bot.examine_cards();  // végig-hoovereli a hand kártyákat, OCR-el
+         sleep(Duration::from_secs(2));
+        bot.land_number = 2;
+        bot.land_count = 2;
+        let initial_hand_count = 5;
+        bot.card_count = initial_hand_count;
+        bot.examine_cards();  // végig-hoovereli a hand kártyákat, OCR-el
 
         // 2) Egyszer battlefield-olvasás
-      //  bot.refresh_battlefield();
-      //  info!("Battlefield frissítés megtörtént.");
+        bot.refresh_battlefield();
+        info!("Battlefield frissítés megtörtént.");
 
         // 3) Ha van instant a kezünkben, próbáljuk kijátszani és az 1. (index=0) creature-re targetelni
-      //  bot.cast_instants_targeting_creature(0);
+        bot.cast_instants_targeting_creature(0);
 
         // Allow launcher to settle
         sleep(Duration::from_secs(5));

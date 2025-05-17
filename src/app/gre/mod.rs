@@ -154,12 +154,12 @@ impl Gre {
                         // közvetlenül OnCastResolved effektek:
                         let effects = c.trigger_by(&Trigger::OnCastResolved);
                         for eff in effects {
-                            let final_e = if let Some(tcard) = &target_creature {
+                            let final_eff = if let Some(tcard) = &target_creature {
                                 effect_resolution::replace_targeted_filter_with_exact(self, eff, tcard)
                             } else {
                                 eff
                             };
-                            self.handle_effect(final_e);
+                            self.handle_effect(final_eff);
                         }
                     } else {
                         self.enter_battlefield(&mut c);
