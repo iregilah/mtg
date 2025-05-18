@@ -249,6 +249,12 @@ impl Bot {
         self.land_played_this_turn = false;
     }
 
+    fn sync_battlefield_from_gre(&mut self) {
+        self.battlefield_creatures.clear();
+        for card in self.gre.battlefield_creatures.values() {
+            self.battlefield_creatures.insert(card.name.clone(), card.clone());
+        }
+    }
     /// Cast the first affordable instant, then click on one of our creatures as target.
     pub fn cast_instants_targeting_creature(&mut self, creature_index: usize) {
         // 1) Keresünk instantot a kezünkben, elég manával
@@ -301,7 +307,7 @@ impl Bot {
 
                         // 6) A stack feloldása: effectek végrehajtása
                         self.gre.resolve_stack();
-
+                        self.sync_battlefield_from_gre();
                         // 7) A GRE a belső `battlefield_creatures` map-et módosítja,
                         //    de utána össze akarjuk szinkronizálni a bot állapotával is.
                         //    Például frissítsük a bot.battlefield_creatures-t is:
@@ -309,23 +315,15 @@ impl Bot {
                         //     de ha külön van, frissítsük.)
                         //
                         // Mindenesetre nézzük meg, mi történt:
+                        info!("   - {} -> {:?}", card.name, card);
                         info!("=== After resolve_stack() - battlefield ===");
-                        for (name, card) in &self.battlefield_creatures {
-                            if let CardType::Creature(cr) = &card.card_type {
-                                let total_power = cr.power + cr.ephemeral_power;
-                                let total_toughness = cr.toughness + cr.ephemeral_toughness;
-                                info!(
-                                    "[{}] => base: {}/{} + ephemeral: {}/{} = total: {}/{}",
-                                    name,
-                                    cr.power,
-                                    cr.toughness,
-                                    cr.ephemeral_power,
-                                    cr.ephemeral_toughness,
-                                    total_power,
-                                    total_toughness
-                                );
+                        for (id, card) in &self.gre.battlefield_creatures {
+                            if let CardType::Creature(_) = &card.card_type {
+                                let cp = card.get_current_power(&self.gre);
+                                let ct = card.get_current_toughness(&self.gre);
+                                info!("   - '{}'(id={}) => current: {}/{}", card.name, id, cp, ct);
                             } else {
-                                info!("[{}] => {:?}", name, card.card_type);
+                                info!("   - '{}'(id={}) => {:?}", card.name, id, card.card_type);
                             }
                         }
                     }

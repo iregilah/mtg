@@ -5,8 +5,9 @@ use crate::app::gre::gre_structs::ActivatedAbility;
 use crate::app::game_state::GamePhase;
 use std::hash::{Hash, Hasher};
 use bitflags::bitflags;
-use tracing::debug;
+use tracing::{debug, info};
 use crate::app::card_attribute::CreatureType::Detective;
+use crate::app::gre::Gre;
 
 const CACOPHONY_SCAMP: &str = "Cacophony Scamp";
 const MONASTERY_SWIFTSPEAR: &str = "Monastery Swiftspear";
@@ -255,6 +256,210 @@ impl Card {
            cloned.card_id, cloned.name, final_power, final_toughness, cloned.type_flags);
 
         cloned
+    }
+    pub fn get_current_power(&self, gre: &Gre) -> i32 {
+        // 1) Kiindulunk a base powerből
+        let base_power = match &self.card_type {
+            CardType::Creature(crea) => crea.power,
+            _ => {
+                info!("get_current_power('{}'): nem Creature típus, visszatérünk 0-val.", self.name);
+                return 0;
+            }
+        };
+        info!("get_current_power('{}'): base power = {}", self.name, base_power);
+
+        // 2) Ideiglenes (ephemeral) buffok (pl. Felonious Rage +2/+0)
+        let ephemeral_power = if let CardType::Creature(crea) = &self.card_type {
+            crea.ephemeral_power
+        } else {
+            0
+        };
+        info!("get_current_power('{}'): ephemeral power = {}", self.name, ephemeral_power);
+
+        // 3) +1/+1 countereket (vagy egyéb countereket) is beleszámítjuk
+        let plus_one_sum = self.find_plus_one_counters();
+        info!("get_current_power('{}'): plus_one_counters => +{}", self.name, plus_one_sum);
+
+        // 4) Aura-szerű buffok: ha van pl. 'Monster' aura csatolva,
+        //    vagy bármilyen enchantment token, ami +X/+Y -t ad
+        let aura_buff = self.sum_aura_power_bonuses(gre);
+        info!("get_current_power('{}'): aura/other buffs => +{}", self.name, aura_buff);
+
+        // 5) Összeadjuk az egészet
+        let total = base_power + ephemeral_power + plus_one_sum + aura_buff;
+        info!("get_current_power('{}'): total power = {}", self.name, total);
+
+        total
+    }
+
+    /// Ugyanez toughnessre
+    pub fn get_current_toughness(&self, gre: &Gre) -> i32 {
+        // 1) Alap toughnesst kiolvassuk
+        let base_toughness = match &self.card_type {
+            CardType::Creature(crea) => crea.toughness,
+            _ => {
+                info!("get_current_toughness('{}'): nem Creature, 0-t adunk vissza.", self.name);
+                return 0;
+            }
+        };
+        info!("get_current_toughness('{}'): base toughness = {}", self.name, base_toughness);
+
+        // 2) ephemeral toughness
+        let ephemeral_toughness = if let CardType::Creature(crea) = &self.card_type {
+            crea.ephemeral_toughness
+        } else {
+            0
+        };
+        info!("get_current_toughness('{}'): ephemeral toughness = {}", self.name, ephemeral_toughness);
+
+        // 3) +1/+1 counterek -> +1 toughness mindegyik
+        let plus_one_sum = self.find_plus_one_counters();
+        info!("get_current_toughness('{}'): plus_one_counters => +{}", self.name, plus_one_sum);
+
+        // 4) aura/tárgy buffok
+        let aura_buff = self.sum_aura_toughness_bonuses(gre);
+        info!("get_current_toughness('{}'): aura/other buffs => +{}", self.name, aura_buff);
+
+        // 5) Összegezés
+        let total = base_toughness + ephemeral_toughness + plus_one_sum + aura_buff;
+        info!("get_current_toughness('{}'): total toughness = {}", self.name, total);
+
+        total
+    }
+    /// Lekérdezzük az _aktuális_ power/toughness értéket,
+    /// figyelembe véve a bázis-statsot, +1/+1 countereket,
+    /// aura tokeneket, ephemeral buffokat, stb.
+    pub fn current_power_toughness(&self, gre: &Gre) -> (i32, i32) {
+        // 1) Ha nem Creature, visszaadjuk (0,0).
+        let creature = match &self.card_type {
+            CardType::Creature(cr) => cr,
+            _ => return (0, 0),
+        };
+
+        // Alapértékek
+        let mut power = creature.power;
+        let mut toughness = creature.toughness;
+
+        // 2) Ha vannak +1/+1 counterek, hozzáadjuk.
+        // (Attól függ, hogy a Te kódban a +1/+1 counterek ténylegesen
+        //  beleszámolódnak-e a base-powerbe, vagy tárolsz valahol
+        //  `plus_one_counter_count: i32` mezőt, stb.)
+        // Például:
+        let plus_one_count = self.find_plus_one_counters();
+        power     += plus_one_count;
+        toughness += plus_one_count;
+
+        // 3) Ha vannak aura tokenek, amelyek +X/+Y-t és/vagy képességet adnak,
+        //    akkor a GRE-ben a "battlefield_creatures" map-ben
+        //    megkeressük mindegyik enchantment tokent, amelynek `attached_to == self.card_id`.
+        //    Tegyük fel, mind +X/+Y. Akkor:
+        for (_cid, possible_aura) in gre.battlefield_creatures.iter() {
+            if possible_aura.attached_to == Some(self.card_id) {
+                // Ha ez auraszerű token, megnézzük, ad-e buffot
+                // mondjuk valamelyik TriggeredEffectAttribute vagy lementett mező alapján
+                if let Some((pb, tb)) = possible_aura.get_buff_amount() {
+                    power     += pb;
+                    toughness += tb;
+                }
+            }
+        }
+
+        // 4) Ha vannak "kör végéig" tartó buffok (Felonious Rage: +2/+0 EoT),
+        //    azt nem írjuk be sehová, hanem a GRE nálad pl. schedule_delayed-en keresztül
+        //    tárolja, vagy ephemeral... Lényeg: bármilyen ponton is van, IDE,
+        //    a "számolásba" be kell hozni.
+        //    Például, ha van ephemeral Power: 2 a kártyában,
+        //    (de a jövőben inkább ne a structban, hanem attribute-ban),
+        //    akkor:
+        power     += creature.ephemeral_power;
+        toughness += creature.ephemeral_toughness;
+
+        // ... és még folytathatnánk
+        (power, toughness)
+    }
+    /// Megnézzük, van-e valamilyen +1/+1 counter a kártyán.
+    /// Például, ha a Card attribute-jei között szerepel az AddCounterAttribute,
+    /// vagy ha van valami “self.num_plus_one_counters” típusú mező, akkor abból összeadjuk.
+    pub fn find_plus_one_counters(&self) -> i32 {
+        let mut total = 0;
+
+        // 1) Ha van dedikált `num_plus_one_counters` meződ, azt ide beírhatod:
+        // total += self.num_plus_one_counters;
+
+        // 2) Ha a countereket a Card attributes‐ben tárolod,
+        //    akkor végignézheted a `self.attributes` listát.
+        // Példa:
+        for attr in &self.attributes {
+            // futásidőn megkérdezzük, hogy ez a trait-obj vajon AddCounterAttribute–e
+            if let Some(a) = attr.as_any().downcast_ref::<AddCounterAttribute>() {
+                if a.counter == CounterType::PlusOnePlusOne {
+                    // a.amount a “+1/+1 counter” mennyisége
+                    total += a.amount as i32;
+                }
+            }
+            // (plusz hasonló megoldás, ha a FirstTimePerTurnAttribute generált +1/+1–et, stb.)
+        }
+
+        total
+    }
+
+    /// Ha ez a kártya "Monster" enchantment–token (vagy bármely más aura),
+    /// akkor visszaadja, hogy mekkora buffot ad a “gazda” lénynek.
+    /// Példa: Monster esetén +1/+1.
+    pub fn get_buff_amount(&self) -> Option<(i32, i32)> {
+        // Ha Nálad a “Monster” aura neve `'Monster'`, akkor pl.:
+        if self.name == "Monster"
+            && self.type_flags.contains(CardTypeFlags::ENCHANTMENT)
+            && self.type_flags.contains(CardTypeFlags::TOKEN)
+        {
+            // ez egy aura token, ami +1/+1–et ad
+            Some((1, 1))
+        } else {
+            // Más aura is lehet, pl. "Fairy" +1/+1, "Knight" +2/+1, stb.
+            // Vagy ha nem aura, akkor None
+            None
+        }
+    }
+
+    fn sum_aura_power_bonuses(&self, gre: &Gre) -> i32 {
+        let mut sum = 0;
+
+        // Végignézzük a GRE-ben, mely enchantment tokenek vannak éppen a battlefielden
+        for (_id, aura_card) in &gre.battlefield_creatures {
+            // Csak az enchantment token érdekel
+            if aura_card.type_flags.contains(CardTypeFlags::ENCHANTMENT)
+                && aura_card.type_flags.contains(CardTypeFlags::TOKEN)
+            {
+                // Ha az aura erre a card_id-ra van attacholva
+                if aura_card.attached_to == Some(self.card_id) {
+                    // Példa: nézzük meg a neve, ha "Monster"
+                    if aura_card.name == "Monster" {
+                        // Ez fixen +1/+1
+                        sum += 1;
+                    }
+                    // Vagy keresheted bennük a plusz attribute-öket is
+                    // aura_card.attributes, triggers, stb.
+                }
+            }
+        }
+
+        sum
+    }
+
+    fn sum_aura_toughness_bonuses(&self, gre: &Gre) -> i32 {
+        let mut sum = 0;
+        for (_id, aura_card) in &gre.battlefield_creatures {
+            if aura_card.type_flags.contains(CardTypeFlags::ENCHANTMENT)
+                && aura_card.type_flags.contains(CardTypeFlags::TOKEN)
+                && aura_card.attached_to == Some(self.card_id)
+            {
+                if aura_card.name == "Monster" {
+                    sum += 1;
+                }
+                // Egyéb aura tokenek ...
+            }
+        }
+        sum
     }
 }
 

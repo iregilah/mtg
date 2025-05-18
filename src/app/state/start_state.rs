@@ -49,7 +49,7 @@ impl State<AppError> for StartState {
          sleep(Duration::from_secs(2));
         bot.land_number = 2;
         bot.land_count = 2;
-        let initial_hand_count = 4;
+        let initial_hand_count = 5;
         bot.card_count = initial_hand_count;
         bot.examine_cards();  // végig-hoovereli a hand kártyákat, OCR-el
 
