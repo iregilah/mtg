@@ -5,7 +5,6 @@ use tracing::{debug, info};
 use crate::app::card_library::{Card, ManaCost};
 use crate::app::game_state::{GameEvent, GamePhase};
 
-
 // -- UGYANAZ AZ ENUM, kiegészítve a Offspring { cost: u32 } mezővel:
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
@@ -110,6 +109,29 @@ pub enum Effect {
         black: u32,
         white: u32,
     },
+    DamageByTargetPower {
+        source: TargetFilter,
+        target: TargetFilter,
+    },
+    TapTarget {
+        target: TargetFilter,
+    },
+    BuffAllByMaxPower {
+        filter: TargetFilter,
+        duration: Duration,
+    },
+    AddCounterAll {
+        counter: CounterType,
+        amount: Amount,
+        filter: TargetFilter,
+    },
+    Destroy {
+        target: TargetFilter,
+    },
+    Exile {
+        target: TargetFilter,
+    },
+    DrawCardsCounted,
 }
 
 /// A mennyiségek
@@ -140,6 +162,8 @@ pub enum KeywordAbility {
     DoubleStrike,
     FirstStrike,
     Reach,
+    Hexproof,
+    Indestructible,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -158,21 +182,67 @@ pub enum CreatureType {
     Goblin,
     Dwarf,
     Detective,
+    Elf,
+    Druid,
+    Rabbit,
+    Badger,
+    Mole,
+    Insect,
+    Robot,
+    Beast,
+    Ooze,
+    Plant,
+    Wurm,
+    Dinosaur,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Trigger {
-    OnEnterBattlefield { filter: TargetFilter },
-    OnDeath { filter: TargetFilter },
-    OnAttack { filter: TargetFilter },
-    OnBlock { filter: TargetFilter },
-    OnCombatDamage { filter: TargetFilter },
-    OnSpellCast { filter: SpellFilter },
-    OnTargetedFirstTimeEachTurn { filter: TargetFilter },
-    OnDealtDamage { filter: TargetFilter },
-    OnAttackWithCreatureType { creature_type: CreatureType },
-    AtPhase { phase: GamePhase, player: PlayerSelector },
+    OnEnterBattlefield {
+        filter: TargetFilter,
+    },
+    OnDeath {
+        filter: TargetFilter,
+    },
+    OnAttack {
+        filter: TargetFilter,
+    },
+    OnBlock {
+        filter: TargetFilter,
+    },
+    OnCombatDamage {
+        filter: TargetFilter,
+    },
+    OnSpellCast {
+        filter: SpellFilter,
+    },
+    OnTargetedFirstTimeEachTurn {
+        filter: TargetFilter,
+    },
+    OnDealtDamage {
+        filter: TargetFilter,
+    },
+    OnAttackWithCreatureType {
+        creature_type: CreatureType,
+    },
+    AtPhase {
+        phase: GamePhase,
+        player: PlayerSelector,
+    },
     OnCastResolved,
+    OnTargeted {
+        filter: TargetFilter,
+        player: PlayerSelector,
+    },
+    OnAddMana {
+        filter: TargetFilter,
+    },
+    OnCounterAdded {
+        filter: TargetFilter,
+    },
+    OnCycle {
+        filter: TargetFilter,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,6 +267,8 @@ pub enum Condition {
     SacrificeSelf,
     Always,
     SpellWasKicked,
+    HasCreaturePower4OrMore,
+    ExiledCardWasCreature,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,8 +281,12 @@ pub enum TargetFilter {
     OpponentCreature,
     CreatureType(CreatureType),
     ExactCardID(u64),
+    Artifact,
+    Enchantment,
+    Land,
+    ControllerLand,
+    CardInGraveyard,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Duration {
@@ -253,7 +329,10 @@ pub struct TriggeredEffectAttribute {
 
 impl CardAttribute for TriggeredEffectAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        info!("TriggeredEffectAttribute: Checking trigger {:?} against {:?}", trigger, self.trigger);
+        info!(
+            "TriggeredEffectAttribute: Checking trigger {:?} against {:?}",
+            trigger, self.trigger
+        );
         let result = if &self.trigger == trigger {
             Some(self.effect.clone())
         } else {
@@ -262,7 +341,9 @@ impl CardAttribute for TriggeredEffectAttribute {
         debug!("TriggeredEffectAttribute: on_trigger result = {:?}", result);
         result
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -279,14 +360,12 @@ impl CardAttribute for CreateEnchantmentAttribute {
         info!("CreateEnchantmentAttribute: received trigger {:?}", trigger);
         let res = if *trigger == Trigger::OnCastResolved {
             Some(Effect::TargetedEffects {
-                sub_effects: vec![
-                    Effect::CreateEnchantmentToken {
-                        name: self.name.clone(),
-                        power_buff: self.power_buff,
-                        toughness_buff: self.toughness_buff,
-                        ability: self.ability.clone(),
-                    },
-                ],
+                sub_effects: vec![Effect::CreateEnchantmentToken {
+                    name: self.name.clone(),
+                    power_buff: self.power_buff,
+                    toughness_buff: self.toughness_buff,
+                    ability: self.ability.clone(),
+                }],
             })
         } else {
             None
@@ -294,7 +373,9 @@ impl CardAttribute for CreateEnchantmentAttribute {
         debug!("CreateEnchantmentAttribute: result = {:?}", res);
         res
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -308,7 +389,9 @@ pub struct BuffAttribute {
 impl CardAttribute for BuffAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
         info!("BuffAttribute: Checking trigger {:?}", trigger);
-        let res = if *trigger == Trigger::OnCastResolved || matches!(trigger, Trigger::OnEnterBattlefield { .. }) {
+        let res = if *trigger == Trigger::OnCastResolved
+            || matches!(trigger, Trigger::OnEnterBattlefield { .. })
+        {
             Some(Effect::ModifyStats {
                 power_delta: self.power,
                 toughness_delta: self.toughness,
@@ -321,7 +404,9 @@ impl CardAttribute for BuffAttribute {
         debug!("BuffAttribute: result = {:?}", res);
         res
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -334,7 +419,9 @@ pub struct GrantAbilityAttribute {
 impl CardAttribute for GrantAbilityAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
         info!("GrantAbilityAttribute: Checking trigger {:?}", trigger);
-        let res = if matches!(trigger, Trigger::OnCastResolved) || matches!(trigger, Trigger::OnEnterBattlefield { .. }) {
+        let res = if matches!(trigger, Trigger::OnCastResolved)
+            || matches!(trigger, Trigger::OnEnterBattlefield { .. })
+        {
             Some(Effect::GrantAbility {
                 ability: self.ability.clone(),
                 duration: self.duration.clone(),
@@ -346,7 +433,9 @@ impl CardAttribute for GrantAbilityAttribute {
         debug!("GrantAbilityAttribute: result = {:?}", res);
         res
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -365,7 +454,9 @@ impl CardAttribute for ChooseOnConditionAttribute {
         debug!("ChooseOnConditionAttribute: result = {:?}", res);
         res
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -376,15 +467,22 @@ pub struct OffspringAttribute {
 impl CardAttribute for OffspringAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
         info!("OffspringAttribute: Checking trigger {:?}", trigger);
-        let res = if let Trigger::OnEnterBattlefield { filter: TargetFilter::SelfCard } = trigger {
-            Some(Effect::Offspring { cost: self.additional_cost })
+        let res = if let Trigger::OnEnterBattlefield {
+            filter: TargetFilter::SelfCard,
+        } = trigger
+        {
+            Some(Effect::Offspring {
+                cost: self.additional_cost,
+            })
         } else {
             None
         };
         debug!("OffspringAttribute: result = {:?}", res);
         res
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -406,13 +504,18 @@ impl CardAttribute for ProwessAttribute {
                     duration: self.duration.clone(),
                     target: TargetFilter::SelfCard,
                 });
-                info!("ProwessAttribute: matched filter {:?}, result = {:?}", filter, res);
+                info!(
+                    "ProwessAttribute: matched filter {:?}, result = {:?}",
+                    filter, res
+                );
                 return res;
             }
         }
         None
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -426,14 +529,19 @@ impl CardAttribute for LifelinkAttribute {
                 info!("LifelinkAttribute: granting lifelink conditional");
                 return Some(Effect::Conditional {
                     condition: Condition::Always,
-                    effect_if_true: Box::new(Effect::GainLife { amount: 0, player: PlayerSelector::Controller }),
+                    effect_if_true: Box::new(Effect::GainLife {
+                        amount: 0,
+                        player: PlayerSelector::Controller,
+                    }),
                     effect_if_false: None,
                 });
             }
         }
         None
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -445,12 +553,17 @@ impl CardAttribute for DeathtouchAttribute {
         if let Trigger::OnCombatDamage { filter } = trigger {
             if *filter == TargetFilter::Creature {
                 info!("DeathtouchAttribute: returning fixed damage = 1");
-                return Some(Effect::Damage { amount: Amount::Fixed(1), target: TargetFilter::SelfCard });
+                return Some(Effect::Damage {
+                    amount: Amount::Fixed(1),
+                    target: TargetFilter::SelfCard,
+                });
             }
         }
         None
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -464,14 +577,19 @@ impl CardAttribute for TrampleAttribute {
                 info!("TrampleAttribute: returning trample conditional");
                 return Some(Effect::Conditional {
                     condition: Condition::Always,
-                    effect_if_true: Box::new(Effect::Damage { amount: Amount::SourcePower, target: TargetFilter::AnyTarget }),
+                    effect_if_true: Box::new(Effect::Damage {
+                        amount: Amount::SourcePower,
+                        target: TargetFilter::AnyTarget,
+                    }),
                     effect_if_false: None,
                 });
             }
         }
         None
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -484,7 +602,10 @@ impl CardAttribute for DoubleStrikeAttribute {
             if *filter == TargetFilter::SelfCard {
                 info!("DoubleStrikeAttribute: scheduling delayed damage");
                 return Some(Effect::Delayed {
-                    effect: Box::new(Effect::Damage { amount: Amount::SourcePower, target: TargetFilter::AnyTarget }),
+                    effect: Box::new(Effect::Damage {
+                        amount: Amount::SourcePower,
+                        target: TargetFilter::AnyTarget,
+                    }),
                     phase: GamePhase::CombatDamage,
                     deps: Vec::new(),
                 });
@@ -492,7 +613,9 @@ impl CardAttribute for DoubleStrikeAttribute {
         }
         None
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -503,14 +626,25 @@ pub struct TypeSpecificTargetAttribute {
 
 impl CardAttribute for TypeSpecificTargetAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        info!("TypeSpecificTargetAttribute: checking trigger {:?}", trigger);
-        if matches!(trigger, Trigger::AtPhase { phase: GamePhase::Combat, player: PlayerSelector::Controller }) {
+        info!(
+            "TypeSpecificTargetAttribute: checking trigger {:?}",
+            trigger
+        );
+        if matches!(
+            trigger,
+            Trigger::AtPhase {
+                phase: GamePhase::Combat,
+                player: PlayerSelector::Controller
+            }
+        ) {
             info!("TypeSpecificTargetAttribute: matched combat phase, returning effect");
             return Some(self.effect.clone());
         }
         None
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -534,7 +668,9 @@ impl CardAttribute for AddCounterAttribute {
         }
         None
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -547,13 +683,18 @@ impl CardAttribute for ProliferateAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
         info!("ProliferateAttribute: trigger = {:?}", trigger);
         if matches!(trigger, Trigger::OnCombatDamage { .. }) {
-            let res = Some(Effect::Proliferate { counter_type: self.counter.clone(), player: self.player.clone() });
+            let res = Some(Effect::Proliferate {
+                counter_type: self.counter.clone(),
+                player: self.player.clone(),
+            });
             debug!("ProliferateAttribute: result = {:?}", res);
             return res;
         }
         None
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -577,7 +718,9 @@ impl CardAttribute for ExileAndPlayAttribute {
         }
         None
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -590,7 +733,10 @@ pub struct ConditionalAttribute {
 
 impl CardAttribute for ConditionalAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        info!("ConditionalAttribute: checking trigger {:?} against {:?}", trigger, self.trigger);
+        info!(
+            "ConditionalAttribute: checking trigger {:?} against {:?}",
+            trigger, self.trigger
+        );
         if *trigger == self.trigger {
             let res = Some(Effect::Conditional {
                 condition: self.condition.clone(),
@@ -602,7 +748,9 @@ impl CardAttribute for ConditionalAttribute {
         }
         None
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -615,7 +763,10 @@ pub struct FirstTimePerTurnAttribute {
 
 impl CardAttribute for FirstTimePerTurnAttribute {
     fn on_trigger(&mut self, trigger: &Trigger) -> Option<Effect> {
-        info!("FirstTimePerTurnAttribute: trigger = {:?}, used = {}", trigger, self.used);
+        info!(
+            "FirstTimePerTurnAttribute: trigger = {:?}, used = {}",
+            trigger, self.used
+        );
         match trigger {
             t if *t == self.base_trigger && !self.used => {
                 self.used = true;
@@ -631,7 +782,9 @@ impl CardAttribute for FirstTimePerTurnAttribute {
             _ => None,
         }
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -655,6 +808,7 @@ impl CardAttribute for DelayedAttribute {
         }
         None
     }
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
-
