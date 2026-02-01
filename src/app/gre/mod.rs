@@ -50,6 +50,7 @@ pub struct Gre {
     pub death_triggers_this_turn: Vec<(Card, Effect)>,
 
     pub current_source_card: Option<Card>,
+    pub last_exiled_card_was_creature: bool,
 }
 
 impl Gre {
@@ -72,6 +73,7 @@ impl Gre {
             battlefield_creatures: HashMap::new(),
             death_triggers_this_turn: Vec::new(),
             current_source_card: None,
+            last_exiled_card_was_creature: false
         }
     }
 }
@@ -89,6 +91,7 @@ impl Gre {
         self.opponent_lost_life_this_turn = false;
         self.us_lost_life_this_turn = false;
         self.death_triggers_this_turn.clear();
+        self.last_exiled_card_was_creature = false;
         // ...
         for (_id, card) in self.battlefield_creatures.iter_mut() {
             for abil in card.activated_abilities.iter_mut() {

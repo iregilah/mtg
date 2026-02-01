@@ -61,6 +61,7 @@ pub enum CardType {
     Enchantment,
     Token,
     Planeswalker,
+    Artifact,
 }
 
 /// ManaCost

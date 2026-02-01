@@ -33,6 +33,8 @@ pub enum GameEvent {
     Custom(String),
     PhaseChange(GamePhase),
     OnCombatDamage,
+    ManaAdded(u64),
+    CounterAdded(u64, u32),
     Targeted(u64),
 }
 
