@@ -1897,22 +1897,22 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 activated_this_turn: false,
             }),
     );
-
-    // Forest
-    lib.insert(
-        FOREST.into(),
-        Card::new(FOREST, CardType::Land, ManaCost::free()),
-    );
-
-    // Basic lands
-    lib.insert(
-        MOUNTAIN.into(),
-        Card::new(MOUNTAIN, CardType::Land, ManaCost::free()),
-    );
     lib.insert(
         ROCKFACE_VILLAGE.into(),
         Card::new(ROCKFACE_VILLAGE, CardType::Land, ManaCost::free()),
     );
+
+
+    // Basic lands
+        lib.insert(
+            MOUNTAIN.into(),
+            Card::new(MOUNTAIN, CardType::Land, ManaCost::free()),
+        );
+
+        lib.insert(
+            FOREST.into(),
+            Card::new(FOREST, CardType::Land, ManaCost::free()),
+        );
 
     lib
 }
