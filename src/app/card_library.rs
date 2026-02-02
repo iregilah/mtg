@@ -197,6 +197,9 @@ impl Card {
             CardType::Planeswalker => {
                 flags |= CardTypeFlags::PLANESWALKER;
             }
+            CardType::Artifact => {
+                flags |= CardTypeFlags::ARTIFACT;
+            }
         }
         Card {
             card_id: 0, // GRE osztja ki
@@ -1377,7 +1380,7 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 ephemeral_power: 0,
                 ephemeral_toughness: 0,
             }),
-            ManaCost::new(3, 0, 2, 0, 0, 0),
+            ManaCost::new(0, 0, 2, 0, 0, 0),
         ),
     );
 
@@ -1903,17 +1906,16 @@ pub fn build_card_library() -> HashMap<String, Card> {
         Card::new(ROCKFACE_VILLAGE, CardType::Land, ManaCost::free()),
     );
 
-
     // Basic lands
-        lib.insert(
-            MOUNTAIN.into(),
-            Card::new(MOUNTAIN, CardType::Land, ManaCost::free()),
-        );
+    lib.insert(
+        MOUNTAIN.into(),
+        Card::new(MOUNTAIN, CardType::Land, ManaCost::free()),
+    );
 
-        lib.insert(
-            FOREST.into(),
-            Card::new(FOREST, CardType::Land, ManaCost::free()),
-        );
+    lib.insert(
+        FOREST.into(),
+        Card::new(FOREST, CardType::Land, ManaCost::free()),
+    );
 
     lib
 }

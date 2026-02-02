@@ -135,6 +135,7 @@ impl Gre {
         }
         if let GameEvent::CounterAdded(id, count) = event {
             let mut batch = Vec::new();
+            let card_exists = self.battlefield_creatures.contains_key(&id);
             for (_cid, c) in self.battlefield_creatures.iter_mut() {
                 if c.card_id == id {
                     let effects = c.trigger_by(&Trigger::OnCounterAdded {
@@ -144,7 +145,7 @@ impl Gre {
                         batch.push((c.clone(), eff));
                     }
                 }
-                if self.battlefield_creatures.contains_key(&id) {
+                if card_exists {
                     let effects = c.trigger_by(&Trigger::OnCounterAdded {
                         filter: TargetFilter::ControllerCreature,
                     });

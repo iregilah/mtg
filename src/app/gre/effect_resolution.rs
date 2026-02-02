@@ -1,6 +1,9 @@
 // src/app/gre/effect_resolution.rs
 
-use crate::app::card_attribute::{Amount, Condition, CounterType, Duration, Effect, PlayerSelector, TargetFilter, Trigger, TriggeredEffectAttribute};
+use crate::app::card_attribute::{
+    Amount, Condition, CounterType, Duration, Effect, PlayerSelector, TargetFilter, Trigger,
+    TriggeredEffectAttribute,
+};
 use crate::app::card_library::CardTypeFlags;
 use crate::app::card_library::{Card, CardType, Creature, ManaCost};
 use crate::app::game_state::{GameEvent, GamePhase, Player};
@@ -298,16 +301,41 @@ impl Gre {
                 }
             }
             Effect::Damage { amount, target } => {
-                info!("Damage effect: amount={} target={:?}", amount, target);
+                let damage_value = match amount {
+                    Amount::Fixed(v) => v,
+                    Amount::SourcePower => {
+                        if let Some(ref src) = self.current_source_card {
+                            if let CardType::Creature(cr) = &src.card_type {
+                                cr.power + cr.ephemeral_power
+                            } else {
+                                0
+                            }
+                        } else {
+                            0
+                        }
+                    }
+                    Amount::SourceToughness => {
+                        if let Some(ref src) = self.current_source_card {
+                            if let CardType::Creature(cr) = &src.card_type {
+                                cr.toughness + cr.ephemeral_toughness
+                            } else {
+                                0
+                            }
+                        } else {
+                            0
+                        }
+                    }
+                };
+                info!("Damage effect: amount={} target={:?}", damage_value, target);
                 match target {
                     TargetFilter::ExactCardID(cid) => {
                         if let Some(card) = self.battlefield_creatures.get_mut(&cid) {
                             if let CardType::Creature(ref mut cr) = card.card_type {
                                 info!(
                                     "  Dealing {} damage to creature '{}' (id={})",
-                                    amount, card.name, cid
+                                    damage_value, card.name, cid
                                 );
-                                if amount as i32 >= cr.toughness + cr.ephemeral_toughness {
+                                if damage_value >= cr.toughness + cr.ephemeral_toughness {
                                     info!("  -> Lethal damage, '{}'(id={}) dies", card.name, cid);
                                     let dead_card = card.clone();
                                     self.battlefield_creatures.remove(&cid);
@@ -321,7 +349,7 @@ impl Gre {
                         }
                     }
                     TargetFilter::Player => {
-                        info!("  Damage to player: {}", amount);
+                        info!("  Damage to player: {}", damage_value);
                         self.opponent_lost_life_this_turn = true;
                     }
                     _ => {
