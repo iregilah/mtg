@@ -474,6 +474,7 @@ impl Gre {
                     return;
                 }
                 info!("  Max power among filtered creatures = {}", max_power_val);
+                let mut delayed_reverts: Vec<Effect> = Vec::new();
                 for (&cid, card) in self.battlefield_creatures.iter_mut() {
                     if let CardType::Creature(ref mut cr) = card.card_type {
                         match duration {
@@ -490,7 +491,7 @@ impl Gre {
                                     duration: Duration::Permanent,
                                     target: TargetFilter::ExactCardID(cid),
                                 };
-                                self.schedule_delayed(revert_effect, GamePhase::End, vec![]);
+                                delayed_reverts.push(revert_effect);
                             }
                             Duration::Permanent => {
                                 cr.power += max_power_val;
@@ -505,6 +506,10 @@ impl Gre {
                             }
                         }
                     }
+                }
+                // FONTOS: iter_mut után (amikor a kölcsönzés már elengedődött) ütemezünk.
+                for eff in delayed_reverts {
+                    self.schedule_delayed(eff, GamePhase::End, vec![]);
                 }
             }
             Effect::AddCounterAll {
@@ -547,6 +552,7 @@ impl Gre {
                 }
                 match filter {
                     TargetFilter::ControllerCreature => {
+                        let mut to_trigger: Vec<GameEvent> = Vec::new();
                         for (&cid, card) in self.battlefield_creatures.iter_mut() {
                             if let CardType::Creature(ref mut cr) = card.card_type {
                                 if counter == CounterType::PlusOnePlusOne {
@@ -564,12 +570,13 @@ impl Gre {
                                         );
                                     }
                                 }
-                                self.trigger_event(
-                                    GameEvent::CounterAdded(cid, count_value as u32),
-                                    &mut Vec::new(),
-                                    Player::Us,
-                                );
+                                to_trigger.push(GameEvent::CounterAdded(cid, count_value as u32));
                             }
+                        }
+                        // iter_mut után: már hívhatunk nyugodtan &mut self metódusokat.
+                        let mut empty_bf: Vec<Card> = Vec::new();
+                        for ev in to_trigger {
+                            self.trigger_event(ev, &mut empty_bf, Player::Us);
                         }
                     }
                     _ => {

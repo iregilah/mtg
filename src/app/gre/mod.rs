@@ -315,22 +315,21 @@ impl Gre {
     /// Delayed effectek futtatása az aktuális fázisban
     pub fn dispatch_delayed(&mut self, current_phase: GamePhase) {
         info!("dispatch_delayed() -> current_phase={:?}", current_phase);
-        let mut still = Vec::new();
 
-        // Kikeressük az éppen most lefuttatható delayed effecteket
-        let mut ready: Vec<_> = self.delayed.drain(..)
-            .filter(|d| {
-                d.execute_phase == current_phase
-                    && d.depends_on.iter().all(|dep| self.executed_delayed.contains(dep))
-            })
-            .collect();
+        let mut ready: Vec<DelayedEffect> = Vec::new();
+                let mut still: Vec<DelayedEffect> = Vec::new();
 
-        // A többit visszatesszük
-        for d in self.delayed.drain(..) {
-            still.push(d);
-        }
-        self.delayed = still;
-
+                for d in self.delayed.drain(..) {
+                    let is_ready =
+                        d.execute_phase == current_phase
+                        && d.depends_on.iter().all(|dep| self.executed_delayed.contains(dep));
+                    if is_ready {
+                        ready.push(d);
+                    } else {
+                        still.push(d);
+                    }
+                }
+                self.delayed = still;
         // Rendezés id alapján
         ready.sort_by_key(|d| d.id);
 
