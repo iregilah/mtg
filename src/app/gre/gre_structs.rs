@@ -12,6 +12,7 @@ pub struct ActivatedAbility {
     pub condition: Condition,
     pub effect: Effect,
     pub activated_this_turn: bool,
+    pub loyalty_change: i32,
 }
 
 /// Késleltetett effekt

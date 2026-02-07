@@ -4,22 +4,23 @@ use crate::app::gre::gre_structs::{DelayedEffect, ReplacementEffect};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use tracing::{debug, info, warn};
 
-use crate::app::card_library::{Card, CardType, Creature, ManaCost};
+use crate::app::card_attribute::{
+    Condition, CreatureType, Duration, Effect, PlayerSelector, TargetFilter, Trigger,
+};
 use crate::app::card_library::CardTypeFlags;
-use crate::app::card_attribute::{Effect, Condition, Duration, PlayerSelector, CreatureType, TargetFilter, Trigger};
-use crate::app::game_state::{GamePhase, GameEvent, Player};
-
+use crate::app::card_library::{Card, CardType, Creature, ManaCost};
+use crate::app::game_state::{GameEvent, GamePhase, Player};
 
 // A többi saját mod
-pub mod stack;
-pub mod gre_structs;
-pub mod trigger;
 pub mod effect_resolution;
+pub mod gre_structs;
+pub mod stack;
+pub mod trigger;
 
 // Publikus újra-exportálás, hogy kívülről elérhető legyen
-pub use stack::{StackEntry, PriorityEntry};
-pub use gre_structs::ActivatedAbility;
 use crate::app::gre::effect_resolution::replace_targeted_filter_with_exact;
+pub use gre_structs::ActivatedAbility;
+pub use stack::{PriorityEntry, StackEntry};
 
 /// Ez lesz a "Game Rules Engine" (GRE) maga
 pub struct Gre {
@@ -73,7 +74,7 @@ impl Gre {
             battlefield_creatures: HashMap::new(),
             death_triggers_this_turn: Vec::new(),
             current_source_card: None,
-            last_exiled_card_was_creature: false
+            last_exiled_card_was_creature: false,
         }
     }
 }
@@ -101,11 +102,13 @@ impl Gre {
     }
 
     pub fn can_activate(&self, ability: &crate::app::gre::ActivatedAbility) -> bool {
-        !ability.activated_this_turn && match ability.condition {
-            Condition::OpponentLostLifeThisTurn => self.opponent_lost_life_this_turn,
-            Condition::FirstTimeThisTurn => !ability.activated_this_turn,
-            _ => false,
-        }
+        !ability.activated_this_turn
+            && match ability.condition {
+                Condition::OpponentLostLifeThisTurn => self.opponent_lost_life_this_turn,
+                Condition::FirstTimeThisTurn => !ability.activated_this_turn,
+                Condition::Always => true,
+                _ => false,
+            }
     }
 
     pub fn reset_priority(&mut self) {
@@ -114,7 +117,11 @@ impl Gre {
     }
 
     pub fn push_to_stack(&mut self, entry: StackEntry) {
-        let prio = if matches!(entry, StackEntry::ActivatedAbility { .. }) { 3 } else { 1 };
+        let prio = if matches!(entry, StackEntry::ActivatedAbility { .. }) {
+            3
+        } else {
+            1
+        };
         self.push(entry, prio);
         self.reset_priority();
     }
@@ -122,16 +129,26 @@ impl Gre {
     fn push(&mut self, entry: StackEntry, priority: u8) {
         let seq = self.sequence;
         self.sequence = self.sequence.wrapping_add(1);
-        debug!("push() -> pushing to stack: {:?}, prio={}, seq={}", entry, priority, seq);
-        self.stack.push(PriorityEntry { priority, sequence: seq, entry });
+        debug!(
+            "push() -> pushing to stack: {:?}, prio={}, seq={}",
+            entry, priority, seq
+        );
+        self.stack.push(PriorityEntry {
+            priority,
+            sequence: seq,
+            entry,
+        });
     }
 
     pub fn cast_spell_with_target(&mut self, card: Card, controller: Player, target: Card) {
         // Először mentsük ki a card_id–t (és ha kell, a nevet is).
         let target_id = target.card_id;
-        let target_name = target.name.clone();  // ha a nevét is ki akarod írni
+        let target_name = target.name.clone(); // ha a nevét is ki akarod írni
 
-        info!("{:?} casts '{}', target='{}'", controller, card.name, target_name);
+        info!(
+            "{:?} casts '{}', target='{}'",
+            controller, card.name, target_name
+        );
 
         // Ezután konstruáljuk a StackEntry::Spell‐t, ezzel "belemovoljuk" a 'target'‐et.
         let entry = StackEntry::Spell {
@@ -146,10 +163,29 @@ impl Gre {
         self.trigger_event(GameEvent::Targeted(target_id), &mut Vec::new(), controller);
     }
 
-    pub fn activate_ability(&mut self, source: Card, ability: crate::app::gre::ActivatedAbility, controller: Player) {
-        info!("activate_ability() -> source='{}', condition={:?}, effect={:?}",
-              source.name, ability.condition, ability.effect);
-        self.push_to_stack(StackEntry::ActivatedAbility { source, ability, controller });
+    pub fn activate_ability(
+        &mut self,
+        source: Card,
+        ability: crate::app::gre::ActivatedAbility,
+        controller: Player,
+    ) {
+        info!(
+            "activate_ability() -> source='{}', condition={:?}, effect={:?}",
+            source.name, ability.condition, ability.effect
+        );
+        self.push_to_stack(StackEntry::ActivatedAbility {
+            source,
+            ability,
+            controller,
+        });
+        // If a Planeswalker is activating an ability, mark all its abilities as used this turn
+        if let Some(card) = self.battlefield_creatures.get_mut(&source.card_id) {
+            if card.type_flags.contains(CardTypeFlags::PLANESWALKER) {
+                for abil in card.activated_abilities.iter_mut() {
+                    abil.activated_this_turn = true;
+                }
+            }
+        }
     }
 
     pub fn resolve_stack(&mut self) {
@@ -157,7 +193,11 @@ impl Gre {
         while let Some(pe) = self.stack.pop() {
             info!("  popped top: {:?}", pe.entry);
             match pe.entry {
-                StackEntry::Spell { card, controller, target_creature } => {
+                StackEntry::Spell {
+                    card,
+                    controller,
+                    target_creature,
+                } => {
                     // Itt mentsük el lokálisan a célpontot
                     let local_target = target_creature.clone();
 
@@ -184,9 +224,17 @@ impl Gre {
                                                     *effect, // pl. a CreateCreatureToken effect
                                                 ));
                                             }
-                                            Effect::CreateEnchantmentToken { name, power_buff, toughness_buff, ability } => {
+                                            Effect::CreateEnchantmentToken {
+                                                name,
+                                                power_buff,
+                                                toughness_buff,
+                                                ability,
+                                            } => {
                                                 // Pl.:
-                                                info!("Lokális 'actual_target' van => Létrehozzuk a token aura-t a '{}'-hez", actual_target.name);
+                                                info!(
+                                                    "Lokális 'actual_target' van => Létrehozzuk a token aura-t a '{}'-hez",
+                                                    actual_target.name
+                                                );
 
                                                 // Lényegében ugyanaz a kód, mint a `execute()`–beli CreateEnchantmentToken ága,
                                                 // de a 'target_card' helyett 'actual_target'–et használunk:
@@ -195,7 +243,7 @@ impl Gre {
                                                     CardType::Enchantment,
                                                     ManaCost::free(),
                                                 )
-                                                    .with_added_type(CardTypeFlags::TOKEN);
+                                                .with_added_type(CardTypeFlags::TOKEN);
 
                                                 aura_card.attached_to = Some(actual_target.card_id);
 
@@ -204,19 +252,26 @@ impl Gre {
                                                 // ...
                                                 // Végül
                                                 self.enter_battlefield(&mut aura_card);
-                                                info!("'{}' enchantment token létrehozva és a(z) '{}' lényhez csatolva.",
-                                                     name, actual_target.name);
+                                                info!(
+                                                    "'{}' enchantment token létrehozva és a(z) '{}' lényhez csatolva.",
+                                                    name, actual_target.name
+                                                );
                                             }
                                             // egyéb sub–effektek (ModifyStats, GrantAbility, stb.)
                                             other => {
-                                                let replaced =
-                                                    replace_targeted_filter_with_exact(self, other, actual_target);
+                                                let replaced = replace_targeted_filter_with_exact(
+                                                    self,
+                                                    other,
+                                                    actual_target,
+                                                );
                                                 self.handle_effect(replaced);
                                             }
                                         }
                                     }
                                 } else {
-                                    warn!("Nincs local_target, átugorjuk a sub_effects végrehajtást.");
+                                    warn!(
+                                        "Nincs local_target, átugorjuk a sub_effects végrehajtást."
+                                    );
                                 }
                             }
                             _ => {
@@ -234,18 +289,44 @@ impl Gre {
                     );
                 }
 
-                StackEntry::TriggeredAbility { source, effect, controller } => {
+                StackEntry::TriggeredAbility {
+                    source,
+                    effect,
+                    controller,
+                } => {
                     info!("  -> Resolving TriggeredAbility: effect={:?}", effect);
                     self.current_source_card = source;
                     self.handle_effect(effect);
                     self.current_source_card = None;
                 }
 
-                StackEntry::ActivatedAbility { source, ability, controller } => {
-                    info!("  -> Resolving ActivatedAbility: effect={:?}", ability.effect);
+                StackEntry::ActivatedAbility {
+                    source,
+                    ability,
+                    controller,
+                } => {
+                    info!(
+                        "  -> Resolving ActivatedAbility: effect={:?}",
+                        ability.effect
+                    );
                     self.current_source_card = Some(source);
                     self.handle_effect(ability.effect.clone());
-                    self.current_source_card = None;
+                    // Apply loyalty cost or gain for Planeswalker abilities
+                    if ability.loyalty_change != 0 {
+                        if let Some(card) = self.battlefield_creatures.get_mut(&source.card_id) {
+                            if let CardType::Planeswalker(ref mut pw) = card.card_type {
+                                pw.loyalty += ability.loyalty_change;
+                                info!("    '{}'s loyalty is now {}", card.name, pw.loyalty);
+                                if pw.loyalty <= 0 {
+                                    self.battlefield_creatures.remove(&source.card_id);
+                                    info!(
+                                        "    '{}' (id={}) is put into graveyard due to 0 loyalty",
+                                        card.name, source.card_id
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -256,20 +337,35 @@ impl Gre {
         info!("resolve_top_of_stack() -> attempting to pop 1 item from stack...");
         if let Some(pe) = self.stack.pop() {
             match pe.entry {
-                StackEntry::TriggeredAbility { source, effect, controller } => {
+                StackEntry::TriggeredAbility {
+                    source,
+                    effect,
+                    controller,
+                } => {
                     info!("  -> top is TriggeredAbility, effect={:?}", effect);
                     self.current_source_card = source;
                     self.handle_effect(effect);
                     self.current_source_card = None;
                 }
-                StackEntry::ActivatedAbility { source, ability, controller } => {
+                StackEntry::ActivatedAbility {
+                    source,
+                    ability,
+                    controller,
+                } => {
                     info!("  -> top is ActivatedAbility, effect={:?}", ability.effect);
                     self.current_source_card = Some(source);
                     self.handle_effect(ability.effect.clone());
                     self.current_source_card = None;
                 }
-                StackEntry::Spell { card, controller, target_creature } => {
-                    info!("  -> top is Spell '{}', (just popping, not auto-resolving).", card.name);
+                StackEntry::Spell {
+                    card,
+                    controller,
+                    target_creature,
+                } => {
+                    info!(
+                        "  -> top is Spell '{}', (just popping, not auto-resolving).",
+                        card.name
+                    );
                     // ...
                 }
             }
@@ -288,7 +384,8 @@ impl Gre {
             f: Box::new(f),
         });
         // Legyen csökkenő sorrend a priority alapján
-        self.replacement_effects.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.replacement_effects
+            .sort_by(|a, b| b.priority.cmp(&a.priority));
     }
 
     /// Continuous (folyamatos) effect hozzáadása
@@ -300,7 +397,12 @@ impl Gre {
     }
 
     /// Delayed effect ütemezése egy adott fázisra
-    pub fn schedule_delayed(&mut self, effect: Effect, phase: GamePhase, depends_on: Vec<usize>) -> usize {
+    pub fn schedule_delayed(
+        &mut self,
+        effect: Effect,
+        phase: GamePhase,
+        depends_on: Vec<usize>,
+    ) -> usize {
         let id = self.next_id;
         self.next_id += 1;
         self.delayed.push(DelayedEffect {
@@ -317,25 +419,29 @@ impl Gre {
         info!("dispatch_delayed() -> current_phase={:?}", current_phase);
 
         let mut ready: Vec<DelayedEffect> = Vec::new();
-                let mut still: Vec<DelayedEffect> = Vec::new();
+        let mut still: Vec<DelayedEffect> = Vec::new();
 
-                for d in self.delayed.drain(..) {
-                    let is_ready =
-                        d.execute_phase == current_phase
-                        && d.depends_on.iter().all(|dep| self.executed_delayed.contains(dep));
-                    if is_ready {
-                        ready.push(d);
-                    } else {
-                        still.push(d);
-                    }
-                }
-                self.delayed = still;
+        for d in self.delayed.drain(..) {
+            let is_ready = d.execute_phase == current_phase
+                && d.depends_on
+                    .iter()
+                    .all(|dep| self.executed_delayed.contains(dep));
+            if is_ready {
+                ready.push(d);
+            } else {
+                still.push(d);
+            }
+        }
+        self.delayed = still;
         // Rendezés id alapján
         ready.sort_by_key(|d| d.id);
 
         // Lefuttatjuk
         for d in ready {
-            info!("  Dispatching delayed effect #{} at {:?}", d.id, current_phase);
+            info!(
+                "  Dispatching delayed effect #{} at {:?}",
+                d.id, current_phase
+            );
             self.executed_delayed.insert(d.id);
             self.handle_effect(d.effect.clone());
         }
@@ -344,7 +450,10 @@ impl Gre {
     pub fn current_stack_target(gre: &Gre) -> Option<Card> {
         if let Some(pe) = gre.stack.peek() {
             match &pe.entry {
-                StackEntry::Spell { target_creature: Some(t), .. } => Some(t.clone()),
+                StackEntry::Spell {
+                    target_creature: Some(t),
+                    ..
+                } => Some(t.clone()),
                 _ => None,
             }
         } else {
@@ -358,7 +467,10 @@ impl Gre {
             self.next_card_id += 1;
         }
         let new_id = card.card_id;
-        info!("enter_battlefield() -> adding '{}' (id={}) to battlefield", card.name, new_id);
+        info!(
+            "enter_battlefield() -> adding '{}' (id={}) to battlefield",
+            card.name, new_id
+        );
 
         self.battlefield_creatures.insert(new_id, card.clone());
 
@@ -366,7 +478,11 @@ impl Gre {
         let effects = card.trigger_by(&Trigger::OnEnterBattlefield {
             filter: TargetFilter::SelfCard,
         });
-        debug!("  card '{}' -> OnEnterBattlefield returned {} effect(s)", card.name, effects.len());
+        debug!(
+            "  card '{}' -> OnEnterBattlefield returned {} effect(s)",
+            card.name,
+            effects.len()
+        );
         for eff in effects {
             self.handle_effect(eff);
         }
@@ -379,8 +495,10 @@ impl Gre {
         toughness: i32,
         creature_types: Vec<crate::app::card_attribute::CreatureType>,
     ) {
-        info!("create_creature_token() -> name='{}', power={}, toughness={}, types={:?}",
-          name, power, toughness, creature_types);
+        info!(
+            "create_creature_token() -> name='{}', power={}, toughness={}, types={:?}",
+            name, power, toughness, creature_types
+        );
 
         let mut new_card = Card::new(
             name,
@@ -395,15 +513,21 @@ impl Gre {
             }),
             ManaCost::free(),
         )
-            .with_added_type(CardTypeFlags::CREATURE)
-            .with_added_type(CardTypeFlags::TOKEN);
+        .with_added_type(CardTypeFlags::CREATURE)
+        .with_added_type(CardTypeFlags::TOKEN);
 
         self.enter_battlefield(&mut new_card);
-        debug!("  creature_token létrehozva és battlefiedre került: '{}'", name);
+        debug!(
+            "  creature_token létrehozva és battlefiedre került: '{}'",
+            name
+        );
     }
 
     pub fn create_clone_card(gre: &mut Gre, mut cloned: Card) {
-        info!("create_clone_card() -> cloning card '{}' (id={}) and placing on battlefield", cloned.name, cloned.card_id);
+        info!(
+            "create_clone_card() -> cloning card '{}' (id={}) and placing on battlefield",
+            cloned.name, cloned.card_id
+        );
         gre.enter_battlefield(&mut cloned);
     }
 }

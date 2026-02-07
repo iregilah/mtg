@@ -194,6 +194,8 @@ pub enum CreatureType {
     Plant,
     Wurm,
     Dinosaur,
+    Hydra,
+    Raccoon,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

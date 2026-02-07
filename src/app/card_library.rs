@@ -40,7 +40,8 @@ const VIVIEN_REID: &str = "Vivien Reid";
 const UGIN_EYE_OF_THE_STORMS: &str = "Ugin, Eye of the Storms";
 const BA_SING_SE: &str = "Ba Sing Se";
 const FOREST: &str = "Forest";
-
+const SYLVAN_SCAVENGING: &str = "Sylvan Scavenging";
+const WARDEN_OF_THE_GROVE: &str = "Warden of the Grove";
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Creature {
     pub power: i32,
@@ -1767,12 +1768,85 @@ pub fn build_card_library() -> HashMap<String, Card> {
         ),
     );
 
+    // Warden of the Grove
+    lib.insert(
+        WARDEN_OF_THE_GROVE.into(),
+        Card::new(
+            WARDEN_OF_THE_GROVE,
+            CardType::Creature(Creature {
+                power: 2,
+                toughness: 2,
+                summoning_sickness: true,
+                abilities: Vec::new(),
+                types: vec![CreatureType::Hydra],
+                ephemeral_power: 0,
+                ephemeral_toughness: 0,
+            }),
+            ManaCost::new(2, 0, 1, 0, 0, 0),
+        )
+        .with(
+            Trigger::AtPhase {
+                phase: GamePhase::End,
+                player: PlayerSelector::Controller,
+            },
+            TriggeredEffectAttribute {
+                trigger: Trigger::AtPhase {
+                    phase: GamePhase::End,
+                    player: PlayerSelector::Controller,
+                },
+                effect: Effect::AddCounter {
+                    counter: CounterType::PlusOnePlusOne,
+                    amount: 1,
+                    target: TargetFilter::SelfCard,
+                },
+            },
+        ),
+    );
+    // Sylvan Scvenging
+    lib.insert(
+        SYLVAN_SCAVENGING.into(),
+        Card::new(
+            SYLVAN_SCAVENGING,
+            CardType::Enchantment,
+            ManaCost::new(1, 0, 2, 0, 0, 0),
+        )
+        .with(
+            Trigger::AtPhase {
+                phase: GamePhase::End,
+                player: PlayerSelector::Controller,
+            },
+            ChooseOnConditionAttribute {
+                choose: 1,
+                options: vec![
+                    Effect::TargetedEffects {
+                        sub_effects: vec![Effect::ModifyStats {
+                            power_delta: 1,
+                            toughness_delta: 1,
+                            duration: Duration::Permanent,
+                            target: TargetFilter::ControllerCreature,
+                        }],
+                    },
+                    Effect::Conditional {
+                        condition: Condition::HasCreaturePower4OrMore,
+                        effect_if_true: Box::new(Effect::CreateCreatureToken {
+                            name: "Raccoon".into(),
+                            power: 3,
+                            toughness: 3,
+                            creature_types: vec![CreatureType::Raccoon],
+                        }),
+                        effect_if_false: None,
+                    },
+                ],
+            },
+        ),
+    );
+
     // Vivien Reid
     lib.insert(
         VIVIEN_REID.into(),
         Card::new(
             VIVIEN_REID,
-            CardType::Planeswalker,
+            CardType::Planeswalker(Planeswalker { loyalty: 0 }),
             ManaCost::new(3, 0, 2, 0, 0, 0),
         )
         .with(
@@ -1792,20 +1866,22 @@ pub fn build_card_library() -> HashMap<String, Card> {
         )
         .with_activated(ActivatedAbility {
             cost: ManaCost::free(),
-            condition: Condition::Always,
+            condition: Condition::FirstTimeThisTurn,
             effect: Effect::DrawCards {
                 count: 1,
                 player: PlayerSelector::Controller,
             },
             activated_this_turn: false,
+            loyalty_change: 1,
         })
         .with_activated(ActivatedAbility {
             cost: ManaCost::free(),
-            condition: Condition::Always,
+            condition: Condition::FirstTimeThisTurn,
             effect: Effect::Destroy {
                 target: TargetFilter::Enchantment,
             },
             activated_this_turn: false,
+            loyalty_change: -3,
         }),
     );
 
@@ -1814,7 +1890,7 @@ pub fn build_card_library() -> HashMap<String, Card> {
         UGIN_EYE_OF_THE_STORMS.into(),
         Card::new(
             UGIN_EYE_OF_THE_STORMS,
-            CardType::Planeswalker,
+            CardType::Planeswalker(Planeswalker { loyalty: 0 }),
             ManaCost::new(7, 0, 0, 0, 0, 0),
         )
         .with(
@@ -1834,7 +1910,7 @@ pub fn build_card_library() -> HashMap<String, Card> {
         )
         .with_activated(ActivatedAbility {
             cost: ManaCost::free(),
-            condition: Condition::Always,
+            condition: Condition::FirstTimeThisTurn,
             effect: Effect::TargetedEffects {
                 sub_effects: vec![
                     Effect::GainLife {
@@ -1848,10 +1924,11 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 ],
             },
             activated_this_turn: false,
+            loyalty_change: 2,
         })
         .with_activated(ActivatedAbility {
             cost: ManaCost::free(),
-            condition: Condition::Always,
+            condition: Condition::FirstTimeThisTurn,
             effect: Effect::AddMana {
                 colorless: 3,
                 red: 0,
@@ -1861,6 +1938,18 @@ pub fn build_card_library() -> HashMap<String, Card> {
                 white: 0,
             },
             activated_this_turn: false,
+            loyalty_change: 0,
+        })
+        .with_activated(ActivatedAbility {
+            cost: ManaCost::free(),
+            condition: Condition::FirstTimeThisTurn,
+            effect: Effect::ExileThenPlayFromExile {
+                count: 20,
+                player: PlayerSelector::Controller,
+                duration: Duration::EndOfTurn,
+            },
+            activated_this_turn: false,
+            loyalty_change: -11,
         }),
     );
 

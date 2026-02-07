@@ -217,24 +217,62 @@ impl Gre {
                     TargetFilter::ExactCardID(cid) => {
                         if let Some(card) = self.battlefield_creatures.get_mut(&cid) {
                             if let CardType::Creature(ref mut cr) = card.card_type {
-                                match counter {
-                                    CounterType::PlusOnePlusOne => {
-                                        // pl. növeled a creature base stats–át
-                                        // VAGY tárolsz egy plus_one_counters: i32 mezőt, stb.
+                                if counter == CounterType::PlusOnePlusOne {
+                                    cr.power += amount as i32;
+                                    cr.toughness += amount as i32;
+                                    info!(
+                                        "    '{}' gets {} +1/+1 counter(s) -> now base {}/{}",
+                                        card.name, amount, cr.power, cr.toughness
+                                    );
+                                }
+                            }
+                            if let CardType::Planeswalker(ref mut pw) = card.card_type {
+                                if counter == CounterType::Loyalty {
+                                    pw.loyalty += amount as i32;
+                                    info!("    '{}' gets {} loyalty counter(s)", card.name, amount);
+                                }
+                            }
+                            // Trigger OnCounterAdded events
+                            self.trigger_event(
+                                GameEvent::CounterAdded(cid, amount),
+                                &mut Vec::new(),
+                                Player::Us,
+                            );
+                        }
+                    }
+                    TargetFilter::SelfCard => {
+                        if let Some(ref src) = self.current_source_card {
+                            let cid = src.card_id;
+                            if let Some(card) = self.battlefield_creatures.get_mut(&cid) {
+                                if let CardType::Creature(ref mut cr) = card.card_type {
+                                    if counter == CounterType::PlusOnePlusOne {
                                         cr.power += amount as i32;
                                         cr.toughness += amount as i32;
                                         info!(
-                                            "'{}' kap {} db +1/+1 countert => most base {}/{}",
+                                            "    '{}' gets {} +1/+1 counter(s) -> now base {}/{}",
                                             card.name, amount, cr.power, cr.toughness
                                         );
                                     }
-                                    _ => { /* loyalty counters, stb. ha akarsz */ }
                                 }
+                                if let CardType::Planeswalker(ref mut pw) = card.card_type {
+                                    if counter == CounterType::Loyalty {
+                                        pw.loyalty += amount as i32;
+                                        info!(
+                                            "    '{}' gets {} loyalty counter(s)",
+                                            card.name, amount
+                                        );
+                                    }
+                                }
+                                self.trigger_event(
+                                    GameEvent::CounterAdded(cid, amount),
+                                    &mut Vec::new(),
+                                    Player::Us,
+                                );
                             }
                         }
                     }
                     _ => {
-                        warn!("AddCounter: nem ExactCardID, átugorjuk");
+                        warn!("AddCounter: unsupported target filter {:?}", target);
                     }
                 }
             }
@@ -683,21 +721,38 @@ impl Gre {
                 info!("TargetedEffects: sub_effects len={}", sub_effects.len());
                 if let Some(target_card) = Gre::current_stack_target(self) {
                     info!(
-                        "  Stack célpontja: '{}' (id={})",
+                        "  Stack target: '{}' (id={})",
                         target_card.name, target_card.card_id
                     );
                     for (i, subeff) in sub_effects.into_iter().enumerate() {
-                        debug!(
-                            "    Feldolgozzuk a(z) {}. sub_effectet: {:?}",
-                            i + 1,
-                            subeff
-                        );
+                        debug!("    Executing sub_effect {}: {:?}", i + 1, subeff);
                         let replaced =
                             replace_targeted_filter_with_exact(self, subeff, &target_card);
                         self.handle_effect(replaced);
                     }
                 } else {
-                    warn!("  Nincs target_creature, átugorjuk a sub_effects végrehajtást.");
+                    info!(
+                        "  No target for TargetedEffects, executing target-less sub_effects if applicable"
+                    );
+                    for subeff in sub_effects {
+                        match subeff {
+                            Effect::GainLife { .. }
+                            | Effect::DrawCards { .. }
+                            | Effect::AddMana { .. }
+                            | Effect::PreventLifeGain { .. }
+                            | Effect::Proliferate { .. }
+                            | Effect::AddCounterAll { .. }
+                            | Effect::BuffAllByMaxPower { .. }
+                            | Effect::Delayed { .. }
+                            | Effect::Offspring { .. }
+                            | Effect::ChooseSome { .. } => {
+                                self.handle_effect(subeff);
+                            }
+                            _ => {
+                                warn!("    Skipping sub_effect {:?} due to missing target", subeff);
+                            }
+                        }
+                    }
                 }
             }
 
